@@ -1,17 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import { Images, Package, Plus, Settings, X } from "lucide-react";
-import { CancelGeneration, ClearSession, ExportProject, GenerateState, GetSettings, ListDirections, ListPresets, LoadSession, MirrorFrames, RevealInFinder, SaveSession } from "../wailsjs/go/main/App";
+import { Images, LibraryBig, ListTodo, Package, Plus, Settings, X } from "lucide-react";
+import { AcknowledgeGeneration, CancelGeneration, ClearSession, DeleteCharacterLibraryItem, ExportAnimation, ExportProject, GenerateState, GetSettings, ImportMotionLibraryFile, ImportMotionLibraryFolder, ListCharacterLibrary, ListDirections, ListMotionLibrary, ListPendingGenerations, ListPresets, LoadSession, MirrorFrames, ReprocessVideoState, RevealInFinder, SaveCharacterLibraryItem, SaveMotionLibraryItem, SaveSession } from "../wailsjs/go/main/App";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import CharacterPanel from "./components/CharacterPanel";
+import CharacterSidebar from "./components/CharacterSidebar";
 import GalleryModal from "./components/GalleryModal";
 import PreviewPanel from "./components/PreviewPanel";
 import SettingsModal, { ISettings } from "./components/SettingsModal";
 import StatesPanel from "./components/StatesPanel";
+import ModuleNav from "./components/toolchain/ModuleNav";
+import ToolchainHub from "./components/toolchain/ToolchainHub";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./components/ui/dialog";
-import { CharacterDef, DirectionInfo, FALLBACK_PRESETS, FrameItem, PresetInfo, StateDef, selectedFrames, uid } from "./types";
-import { useI18n } from "./i18n";
+import { AlignmentMode, AnimationPipeline, AppModule, CharacterDef, CharacterLibraryItem, CharacterWorkspace, DirectionInfo, FALLBACK_PRESETS, FrameFitMode, FrameItem, FrameSamplerMode, MotionLibraryItem, MotionSourceMode, PresetInfo, StateDef, TaskProgress, VideoPromptLanguage, VideoReferenceMode, VideoShadowMode, VideoSubjectMode, selectedFrames, uid } from "./types";
+import { Lang, useI18n } from "./i18n";
+import { isBackendCancel, localizeBackendList, localizeBackendText } from "./i18n/backend";
 import { directionName } from "./i18n/catalog";
+import { findIPRiskTerms } from "./ipRisk";
 import logoUrl from "./assets/logo.svg";
 
 interface IToast {
@@ -20,8 +25,121 @@ interface IToast {
   text: string;
 }
 
+interface IPendingGeneration {
+  requestId: string;
+  stateId?: string;
+  stateName: string;
+  rawVideoPath: string;
+}
+
+const sessionStateSnapshot = (states: StateDef[]): StateDef[] =>
+  states.map((state) => ({
+    ...state,
+    status: state.status === "generating" ? (state.items.length > 0 ? "done" : "idle") : state.status,
+    progress: undefined,
+    candidateFrames: state.candidateFrames?.map((candidate) =>
+      candidate.sourcePath ? { ...candidate, png: undefined } : candidate
+    ),
+  }));
+
+const characterFromLibrary = (item: CharacterLibraryItem): CharacterDef => ({
+  libraryId: item.id,
+  image: item.image ?? null,
+  name: item.name ?? "",
+  description: item.description ?? "",
+  styleKey: item.styleKey || "pixel",
+  styleCustom: item.styleCustom ?? "",
+});
+
+const emptyCharacter = (libraryId?: string): CharacterDef => ({
+  libraryId,
+  image: null,
+  name: "",
+  description: "",
+  styleKey: "pixel",
+  styleCustom: "",
+});
+
+const restoreStates = (
+  value: unknown,
+  defaultPipeline: string | undefined,
+  fallbackFitMode: unknown,
+  language: Lang,
+): StateDef[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((state: any) => state?.mode !== "procedural")
+    .map((state: StateDef) => {
+      const hasItems = Array.isArray(state.items) && state.items.length > 0;
+      const legacyQualityFailure = state.status === "error" && hasItems;
+      const restoredStatus = state.status === "generating"
+        ? (hasItems ? "done" : "idle")
+        : legacyQualityFailure
+          ? "review"
+          : state.status;
+      return {
+        ...state,
+        isCustom: (state as any).isCustom === true || /^custom\d*$/i.test(state.name),
+        customLabel: (state as any).customLabel ?? "",
+        status: restoredStatus,
+        error: legacyQualityFailure ? undefined : state.error,
+        qualityReview: (state as any).qualityReview ?? (legacyQualityFailure
+          ? { summary: state.error || localizeBackendText("质检未通过，请检查当前帧。", language), ignored: false, source: "session" }
+          : undefined),
+        pipeline: normalizePipeline((state as any).pipeline ?? defaultPipeline),
+        lastPipeline: (state as any).lastPipeline ? normalizePipeline((state as any).lastPipeline) : undefined,
+        progress: undefined,
+        rawExtractedFrames: Array.isArray((state as any).rawExtractedFrames) ? (state as any).rawExtractedFrames : [],
+        motionSourceMode: normalizeMotionMode((state as any).motionSourceMode),
+        motionSourceId: (state as any).motionSourceId ?? "",
+        videoReferenceMode: normalizeVideoReferenceMode((state as any).videoReferenceMode),
+        videoSubjectMode: normalizeVideoSubjectMode((state as any).videoSubjectMode),
+        videoPromptLanguage: normalizeVideoPromptLanguage((state as any).videoPromptLanguage),
+        videoShadowMode: normalizeVideoShadowMode((state as any).videoShadowMode),
+        frameSamplerMode: normalizeFrameSamplerMode((state as any).frameSamplerMode),
+        alignmentMode: normalizeAlignmentMode((state as any).alignmentMode),
+        frameFitMode: normalizeFrameFitMode((state as any).frameFitMode ?? fallbackFitMode),
+        trace: (state as any).trace,
+        candidateFrames: Array.isArray((state as any).candidateFrames) ? (state as any).candidateFrames : [],
+        items: Array.isArray(state.items)
+          ? state.items.map((frame: any) => ({
+              ...frame,
+              source: frame.source ?? "session",
+              sourceRef: frame.sourceRef ?? frame.replacement?.candidateId ?? "",
+            }))
+          : [],
+      } as StateDef;
+    });
+};
+
 // 활성 프로바이더에 키가 있는지 확인
-const hasActiveKey = (s: ISettings | null) => !!s?.providers?.[s.provider]?.hasKey;
+const activeImageProvider = (s: ISettings | null) => s?.imageProvider || s?.provider || "gemini";
+const activeVideoProvider = (s: ISettings | null) => s?.videoProvider || "zetatechs";
+const hasActiveKey = (s: ISettings | null) => !!s?.providers?.[activeImageProvider(s)]?.hasKey;
+const hasVideoKey = (s: ISettings | null) => !!s?.providers?.[activeVideoProvider(s)]?.hasKey;
+const supportsVideo = (s: ISettings | null) =>
+  !!s?.providers?.[activeVideoProvider(s)]?.supportsVideo && hasVideoKey(s);
+const hasGenerationKey = (s: ISettings | null) => hasActiveKey(s) || hasVideoKey(s);
+const normalizePipeline = (value?: string | null): AnimationPipeline =>
+  value === "image_strip" ? "image_strip" : "video_to_frames";
+const normalizeMotionMode = (value?: string | null): MotionSourceMode =>
+  value === "direct" || value === "guide_image_strip" || value === "ai_video" ? value : "none";
+const normalizeVideoReferenceMode = (value?: string | null): VideoReferenceMode =>
+  value === "auto" || value === "none" || value === "identity_reference" || value === "first_frame" || value === "start_end_frame" ? value : "identity_reference";
+const normalizeVideoSubjectMode = (value?: string | null): VideoSubjectMode =>
+  value === "auto" || value === "include_description" || value === "reference_only" ? value : "include_description";
+const normalizeVideoPromptLanguage = (value?: string | null): VideoPromptLanguage =>
+  value === "zh" || value === "en" ? value : "auto";
+const normalizeVideoShadowMode = (value?: string | null): VideoShadowMode =>
+  value === "allow_contact" ? "allow_contact" : "avoid";
+const normalizeFrameSamplerMode = (value?: string | null): FrameSamplerMode =>
+  value === "uniform" ? "uniform" : "candidate_pool";
+const normalizeAlignmentMode = (value?: string | null): AlignmentMode =>
+  value === "game_anchor_normalize" ? "game_anchor_normalize" : "preserve_source_canvas";
+const normalizeFrameFitMode = (value?: string | null): FrameFitMode =>
+  value === "auto_expand" || value === "crop" ? value : "contain";
+const defaultAlignmentMode = (pipeline: AnimationPipeline, motionMode: MotionSourceMode): AlignmentMode =>
+  motionMode === "direct" || pipeline === "video_to_frames" ? "preserve_source_canvas" : "game_anchor_normalize";
 
 const PROVIDER_LABELS: Record<string, string> = {
   gemini: "Gemini",
@@ -29,6 +147,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   openrouter: "OpenRouter",
   fal: "fal.ai",
   byteplus: "BytePlus",
+  zetatechs: "ZetaTechs",
+  volcengine: "火山方舟",
 };
 
 export default function App() {
@@ -37,21 +157,43 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
   const [confirmNew, setConfirmNew] = useState(false);
-  const [character, setCharacter] = useState<CharacterDef>({
-    image: null,
-    name: "",
-    description: "",
-    styleKey: "pixel",
-    styleCustom: "",
-  });
+  const [character, setCharacter] = useState<CharacterDef>(emptyCharacter());
+  const [characterLibrary, setCharacterLibrary] = useState<CharacterLibraryItem[]>([]);
+  const [activeCharacterId, setActiveCharacterId] = useState<string | null>(null);
   const [cellSize, setCellSize] = useState(256);
+  const [frameFitMode, setFrameFitMode] = useState<FrameFitMode>("contain");
+  const [atlasColumns, setAtlasColumns] = useState(8);
   const [states, setStates] = useState<StateDef[]>([]);
+  const [motionLibrary, setMotionLibrary] = useState<MotionLibraryItem[]>([]);
   const [directions, setDirections] = useState<DirectionInfo[]>([]);
   const [presets, setPresets] = useState<PresetInfo[]>(FALLBACK_PRESETS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
+  const [progressPercent, setProgressPercent] = useState<number | null>(null);
   const [toasts, setToasts] = useState<IToast[]>([]);
+  const [activeModule, setActiveModule] = useState<AppModule>("home");
+  const [showToolAssets, setShowToolAssets] = useState(false);
+  const [showToolTasks, setShowToolTasks] = useState(false);
+
+  useEffect(() => {
+    const receiveToolchainAsset = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.targetModule !== "animation") return;
+      void Promise.all([ListCharacterLibrary(), ListMotionLibrary()])
+        .then(([characters, motions]) => {
+          setCharacterLibrary(Array.isArray(characters) ? characters as unknown as CharacterLibraryItem[] : []);
+          setMotionLibrary(Array.isArray(motions) ? motions as unknown as MotionLibraryItem[] : []);
+        })
+        .catch((error) => {
+          const id = uid("toast");
+          setToasts((current) => [...current, { id, kind: "error", text: localizeBackendText(error, lang) }]);
+          window.setTimeout(() => setToasts((current) => current.filter((item) => item.id !== id)), 4200);
+        });
+    };
+    window.addEventListener("toolchain-asset-sent", receiveToolchainAsset);
+    return () => window.removeEventListener("toolchain-asset-sent", receiveToolchainAsset);
+  }, []);
 
   // 최신 상태 참조 (비동기 루프에서 사용)
   const statesRef = useRef(states);
@@ -60,14 +202,60 @@ export default function App() {
   charRef.current = character;
   const cellRef = useRef(cellSize);
   cellRef.current = cellSize;
+  const frameFitRef = useRef(frameFitMode);
+  frameFitRef.current = frameFitMode;
+  const atlasColumnsRef = useRef(atlasColumns);
+  atlasColumnsRef.current = atlasColumns;
+  const selectedRef = useRef(selectedId);
+  selectedRef.current = selectedId;
+  const activeCharacterIdRef = useRef(activeCharacterId);
+  activeCharacterIdRef.current = activeCharacterId;
+  const workspacesRef = useRef<CharacterWorkspace[]>([]);
   const cancelRef = useRef(false); // 전체 생성 루프 중단 플래그
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const langRef = useRef(lang);
+  langRef.current = lang;
 
   const restoredRef = useRef(false); // 세션 복원 완료 전 자동 저장 방지
+  const lastSavedSessionRef = useRef("");
+
+  const syncCurrentWorkspace = (stateList: StateDef[] = statesRef.current): CharacterWorkspace[] => {
+    const characterId = activeCharacterIdRef.current;
+    if (!characterId) return workspacesRef.current;
+    const workspace: CharacterWorkspace = {
+      characterId,
+      character: { ...charRef.current, libraryId: characterId },
+      cellSize: cellRef.current,
+      frameFitMode: frameFitRef.current,
+      atlasColumns: atlasColumnsRef.current,
+      states: sessionStateSnapshot(stateList),
+      selectedId: selectedRef.current,
+    };
+    const exists = workspacesRef.current.some((item) => item.characterId === characterId);
+    workspacesRef.current = exists
+      ? workspacesRef.current.map((item) => (item.characterId === characterId ? workspace : item))
+      : [...workspacesRef.current, workspace];
+    return workspacesRef.current;
+  };
+
+  const sessionPayload = (stateList: StateDef[] = statesRef.current) => JSON.stringify({
+    v: 4,
+    activeCharacterId: activeCharacterIdRef.current,
+    workspaces: syncCurrentWorkspace(stateList).map((workspace) => ({
+      ...workspace,
+      character: { ...workspace.character, image: null },
+      states: sessionStateSnapshot(workspace.states),
+    })),
+  });
+
+  const persistSessionNow = async () => {
+    const payload = sessionPayload();
+    await SaveSession(payload);
+    lastSavedSessionRef.current = payload;
+  };
 
   useEffect(() => {
-    refreshSettings();
     ListDirections()
       .then((list: any) => setDirections(list ?? []))
       .catch(() => {});
@@ -76,38 +264,216 @@ export default function App() {
         if (Array.isArray(list) && list.length > 0) setPresets(list);
       })
       .catch(() => {}); // 실패 시 FALLBACK_PRESETS 유지
+    ListMotionLibrary()
+      .then((list: any) => setMotionLibrary(Array.isArray(list) ? list : []))
+      .catch(() => {});
     const off = EventsOn("progress", (data: any) => {
       const st = data?.state ? `[${data.state}] ` : "";
-      setProgress(`${st}${data?.message ?? ""}`);
+      const message = localizeBackendText(data?.message ?? "", langRef.current);
+      setProgress(message ? `${st}${message}` : "");
+      const rawPercent = Number(data?.percent);
+      const percent = Number.isFinite(rawPercent) && message ? Math.max(0, Math.min(100, Math.round(rawPercent))) : null;
+      setProgressPercent(percent);
+      if (data?.state) {
+        const current = Number(data?.current);
+        const total = Number(data?.total);
+        const itemProgress: TaskProgress | undefined = message
+          ? {
+              phase: String(data?.phase ?? ""),
+              message,
+              percent: percent ?? undefined,
+              current: Number.isFinite(current) ? current : undefined,
+              total: Number.isFinite(total) ? total : undefined,
+            }
+          : undefined;
+        setStates((prev) => {
+          const next = prev.map((s) => (s.name === data.state ? { ...s, progress: itemProgress } : s));
+          statesRef.current = next;
+          return next;
+        });
+      }
+    });
+    const offArtifact = EventsOn("generation-artifact", (data: IPendingGeneration) => {
+      if (!data?.rawVideoPath) return;
+      setStates((prev) => {
+        const next = prev.map((state) =>
+          (data.stateId && state.id === data.stateId) || (!data.stateId && state.name === data.stateName)
+            ? { ...state, rawVideoPath: data.rawVideoPath }
+            : state
+        );
+        statesRef.current = next;
+        return next;
+      });
+    });
+    const offToolchainAsset = EventsOn("toolchain-asset-sent", (data: any) => {
+      if (data?.targetModule !== "animation") return;
+      void Promise.all([ListCharacterLibrary(), ListMotionLibrary()])
+        .then(([characters, motions]: any[]) => {
+          setCharacterLibrary(Array.isArray(characters) ? characters : []);
+          setMotionLibrary(Array.isArray(motions) ? motions : []);
+        })
+        .catch(() => {});
     });
 
     // 이전 작업 세션 복원
     (async () => {
       try {
-        const raw = await LoadSession();
-        if (raw) {
-          const s = JSON.parse(raw);
-          if (s?.character) {
-            setCharacter({
-              image: s.character.image ?? null,
-              name: s.character.name ?? "",
-              description: s.character.description ?? "",
-              styleKey: s.character.styleKey ?? "pixel",
-              styleCustom: s.character.styleCustom ?? "",
+        const initialSettings = await refreshSettings();
+        const [raw, rawLibrary] = await Promise.all([LoadSession(), ListCharacterLibrary()]);
+        const parsed = raw ? JSON.parse(raw) : {};
+        let libraryItems = Array.isArray(rawLibrary) ? rawLibrary as unknown as CharacterLibraryItem[] : [];
+        let restoredWorkspaces: CharacterWorkspace[] = [];
+
+        if (Array.isArray(parsed?.workspaces)) {
+          for (const rawWorkspace of parsed.workspaces) {
+            const characterId = String(rawWorkspace?.characterId ?? rawWorkspace?.character?.libraryId ?? "").trim();
+            if (!characterId) continue;
+            const libraryItem = libraryItems.find((item) => item.id === characterId);
+            let restoredCharacter: CharacterDef = libraryItem
+              ? characterFromLibrary(libraryItem)
+              : {
+                  ...emptyCharacter(characterId),
+                  ...(rawWorkspace.character ?? {}),
+                  libraryId: characterId,
+                };
+            if (!libraryItem) {
+              const saved = await SaveCharacterLibraryItem({
+                id: characterId,
+                name: restoredCharacter.name,
+                description: restoredCharacter.description,
+                styleKey: restoredCharacter.styleKey,
+                styleCustom: restoredCharacter.styleCustom,
+                image: restoredCharacter.image ?? "",
+              } as any) as unknown as CharacterLibraryItem;
+              libraryItems = [...libraryItems, saved];
+              restoredCharacter = characterFromLibrary(saved);
+            }
+            const restoredStates = restoreStates(
+              rawWorkspace.states,
+              initialSettings?.animationPipeline,
+              rawWorkspace.frameFitMode,
+              langRef.current,
+            );
+            const selected = restoredStates.some((state) => state.id === rawWorkspace.selectedId)
+              ? rawWorkspace.selectedId
+              : null;
+            restoredWorkspaces.push({
+              characterId,
+              character: restoredCharacter,
+              cellSize: typeof rawWorkspace.cellSize === "number" ? rawWorkspace.cellSize : 256,
+              frameFitMode: normalizeFrameFitMode(rawWorkspace.frameFitMode),
+              atlasColumns: typeof rawWorkspace.atlasColumns === "number"
+                ? Math.max(1, Math.min(32, rawWorkspace.atlasColumns))
+                : 8,
+              states: restoredStates,
+              selectedId: selected,
             });
           }
-          if (typeof s?.cellSize === "number") setCellSize(s.cellSize);
-          if (Array.isArray(s?.states)) {
-            // 생성 도중 종료된 상태는 안전하게 정리, 구버전 절차 애니메이션 상태는 제외
-            const states: StateDef[] = s.states
-              .filter((st: any) => st?.mode !== "procedural")
-              .map((st: StateDef) => ({
-                ...st,
-                status: st.status === "generating" ? (st.items?.length > 0 ? "done" : "idle") : st.status,
-              }));
-            setStates(states);
-            if (s.selectedId && states.some((x) => x.id === s.selectedId)) setSelectedId(s.selectedId);
+        } else if (parsed?.character) {
+          const legacyCharacter: CharacterDef = {
+            ...emptyCharacter(),
+            image: parsed.character.image ?? null,
+            name: parsed.character.name ?? "",
+            description: parsed.character.description ?? "",
+            styleKey: parsed.character.styleKey ?? "pixel",
+            styleCustom: parsed.character.styleCustom ?? "",
+          };
+          const saved = await SaveCharacterLibraryItem({
+            name: legacyCharacter.name,
+            description: legacyCharacter.description,
+            styleKey: legacyCharacter.styleKey,
+            styleCustom: legacyCharacter.styleCustom,
+            image: legacyCharacter.image ?? "",
+          } as any) as unknown as CharacterLibraryItem;
+          libraryItems = [saved, ...libraryItems.filter((item) => item.id !== saved.id)];
+          const restoredStates = restoreStates(
+            parsed.states,
+            initialSettings?.animationPipeline,
+            parsed.frameFitMode,
+            langRef.current,
+          );
+          restoredWorkspaces = [{
+            characterId: saved.id,
+            character: characterFromLibrary(saved),
+            cellSize: typeof parsed.cellSize === "number" ? parsed.cellSize : 256,
+            frameFitMode: normalizeFrameFitMode(parsed.frameFitMode),
+            atlasColumns: typeof parsed.atlasColumns === "number" ? Math.max(1, Math.min(32, parsed.atlasColumns)) : 8,
+            states: restoredStates,
+            selectedId: restoredStates.some((state) => state.id === parsed.selectedId) ? parsed.selectedId : null,
+          }];
+        }
+
+        if (restoredWorkspaces.length === 0) {
+          let first = libraryItems[0];
+          if (!first) {
+            first = await SaveCharacterLibraryItem({
+              name: t("unnamed_character"),
+              styleKey: "pixel",
+            } as any) as unknown as CharacterLibraryItem;
+            libraryItems = [first];
           }
+          restoredWorkspaces = [{
+            characterId: first.id,
+            character: characterFromLibrary(first),
+            cellSize: 256,
+            frameFitMode: "contain",
+            atlasColumns: 8,
+            states: [],
+            selectedId: null,
+          }];
+        }
+
+        let restoredActiveId = String(parsed?.activeCharacterId ?? "").trim();
+        if (!restoredWorkspaces.some((workspace) => workspace.characterId === restoredActiveId)) {
+          restoredActiveId = restoredWorkspaces[0].characterId;
+        }
+        const pending = ((await ListPendingGenerations()) ?? []) as unknown as IPendingGeneration[];
+        const recovered: IPendingGeneration[] = [];
+        for (const item of pending) {
+          if (!item.rawVideoPath) continue;
+          for (const workspace of restoredWorkspaces) {
+            const index = workspace.states.findIndex((state) =>
+              (item.stateId && state.id === item.stateId) || (!item.stateId && state.name === item.stateName)
+            );
+            if (index < 0) continue;
+            const state = workspace.states[index];
+            workspace.states[index] = {
+              ...state,
+              rawVideoPath: item.rawVideoPath,
+              status: state.items.length > 0 ? "done" : "idle",
+              progress: undefined,
+              warnings: [...(state.warnings ?? []), localizeBackendText("检测到上次生成已下载的原视频，可在朔源页重新处理。", langRef.current)],
+            };
+            recovered.push(item);
+            break;
+          }
+        }
+        const activeWorkspace = restoredWorkspaces.find((workspace) => workspace.characterId === restoredActiveId)!;
+        workspacesRef.current = restoredWorkspaces;
+        activeCharacterIdRef.current = restoredActiveId;
+        setCharacterLibrary(libraryItems);
+        setActiveCharacterId(restoredActiveId);
+        setCharacter(activeWorkspace.character);
+        setCellSize(activeWorkspace.cellSize);
+        setFrameFitMode(activeWorkspace.frameFitMode);
+        setAtlasColumns(activeWorkspace.atlasColumns);
+        setStates(activeWorkspace.states);
+        statesRef.current = activeWorkspace.states;
+        setSelectedId(activeWorkspace.selectedId);
+        selectedRef.current = activeWorkspace.selectedId;
+        if (recovered.length > 0) {
+          const recoveredPayload = JSON.stringify({
+            v: 4,
+            activeCharacterId: restoredActiveId,
+            workspaces: restoredWorkspaces.map((workspace) => ({
+              ...workspace,
+              character: { ...workspace.character, image: null },
+              states: sessionStateSnapshot(workspace.states),
+            })),
+          });
+          await SaveSession(recoveredPayload);
+          lastSavedSessionRef.current = recoveredPayload;
+          await Promise.all(recovered.map((item) => AcknowledgeGeneration(item.requestId)));
         }
       } catch {
         // 손상된 세션은 무시
@@ -116,17 +482,53 @@ export default function App() {
       }
     })();
 
-    return off;
+    return () => {
+      off();
+      offArtifact();
+      offToolchainAsset();
+    };
   }, []);
 
   // 작업 세션 자동 저장 (디바운스)
   useEffect(() => {
     if (!restoredRef.current) return;
+    if (states.some((state) => state.status === "generating")) return;
     const t = setTimeout(() => {
-      SaveSession(JSON.stringify({ v: 1, character, cellSize, states, selectedId })).catch(() => {});
+      const payload = sessionPayload(states);
+      if (payload === lastSavedSessionRef.current) return;
+      SaveSession(payload)
+        .then(() => {
+          lastSavedSessionRef.current = payload;
+        })
+        .catch(() => {});
     }, 1200);
     return () => clearTimeout(t);
-  }, [character, cellSize, states, selectedId]);
+  }, [character, activeCharacterId, cellSize, frameFitMode, atlasColumns, states, selectedId]);
+
+  // 角色元数据和基础图独立保存到角色库，避免新建项目或会话损坏时丢失。
+  useEffect(() => {
+    if (!restoredRef.current || !activeCharacterId) return;
+    const timer = setTimeout(() => {
+      SaveCharacterLibraryItem({
+        id: activeCharacterId,
+        name: character.name,
+        description: character.description,
+        styleKey: character.styleKey,
+        styleCustom: character.styleCustom,
+        image: character.image ?? "",
+      } as any)
+        .then((saved: any) => {
+          setCharacterLibrary((prev) => {
+            const exists = prev.some((item) => item.id === saved.id);
+            return exists
+              ? prev.map((item) => (item.id === saved.id ? saved : item))
+              : [saved, ...prev];
+          });
+        })
+        .catch(() => {});
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [activeCharacterId, character]);
 
   // 전역 단축키: ⌘, 설정 / ⌘E 내보내기 / ⌘G 갤러리
   useEffect(() => {
@@ -151,10 +553,89 @@ export default function App() {
     try {
       const s = (await GetSettings()) as unknown as ISettings;
       setSettings(s);
-      if (!hasActiveKey(s)) setShowSettings(true);
+      if (!hasGenerationKey(s)) setShowSettings(true);
       return s;
     } catch {
       return null;
+    }
+  };
+
+  const refreshMotionLibrary = async (): Promise<MotionLibraryItem[]> => {
+    try {
+      const list = (await ListMotionLibrary()) as unknown as MotionLibraryItem[];
+      const safe = Array.isArray(list) ? list : [];
+      setMotionLibrary(safe);
+      return safe;
+    } catch {
+      return motionLibrary;
+    }
+  };
+
+  const activateCharacterWorkspace = (item: CharacterLibraryItem) => {
+    if (busyRef.current) return;
+    syncCurrentWorkspace();
+    let workspace = workspacesRef.current.find((entry) => entry.characterId === item.id);
+    if (!workspace) {
+      workspace = {
+        characterId: item.id,
+        character: characterFromLibrary(item),
+        cellSize: 256,
+        frameFitMode: "contain",
+        atlasColumns: 8,
+        states: [],
+        selectedId: null,
+      };
+      workspacesRef.current = [...workspacesRef.current, workspace];
+    }
+    activeCharacterIdRef.current = item.id;
+    charRef.current = workspace.character;
+    cellRef.current = workspace.cellSize;
+    frameFitRef.current = workspace.frameFitMode;
+    atlasColumnsRef.current = workspace.atlasColumns;
+    statesRef.current = workspace.states;
+    selectedRef.current = workspace.selectedId;
+    setActiveCharacterId(item.id);
+    setCharacter(workspace.character);
+    setCellSize(workspace.cellSize);
+    setFrameFitMode(workspace.frameFitMode);
+    setAtlasColumns(workspace.atlasColumns);
+    setStates(workspace.states);
+    setSelectedId(workspace.selectedId);
+  };
+
+  const handleAddCharacter = async () => {
+    if (busyRef.current) return;
+    try {
+      const saved = await SaveCharacterLibraryItem({
+        name: t("unnamed_character"),
+        styleKey: "pixel",
+      } as any) as unknown as CharacterLibraryItem;
+      setCharacterLibrary((prev) => [saved, ...prev]);
+      activateCharacterWorkspace(saved);
+    } catch (error) {
+      toast("error", localizeBackendText(error, lang));
+    }
+  };
+
+  const handleSelectCharacter = (id: string) => {
+    const item = characterLibrary.find((entry) => entry.id === id);
+    if (item) activateCharacterWorkspace(item);
+  };
+
+  const handleDeleteCharacter = async (id: string) => {
+    if (busyRef.current || characterLibrary.length <= 1) return;
+    try {
+      await DeleteCharacterLibraryItem(id);
+      const remaining = characterLibrary.filter((item) => item.id !== id);
+      workspacesRef.current = workspacesRef.current.filter((workspace) => workspace.characterId !== id);
+      setCharacterLibrary(remaining);
+      if (activeCharacterIdRef.current === id && remaining[0]) {
+        activeCharacterIdRef.current = null;
+        setActiveCharacterId(null);
+        activateCharacterWorkspace(remaining[0]);
+      }
+    } catch (error) {
+      toast("error", localizeBackendText(error, lang));
     }
   };
 
@@ -171,13 +652,69 @@ export default function App() {
     setStates(statesRef.current);
   };
 
+  const commitGenerationJournal = async (requestId: string) => {
+    if (!requestId) return;
+    try {
+      await persistSessionNow();
+      await AcknowledgeGeneration(requestId);
+    } catch (e) {
+      toast("error", localizeBackendText(`结果已保留，但会话提交失败：${String(e)}`, lang));
+    }
+  };
+
   const generateOne = async (id: string, feedback = ""): Promise<boolean> => {
     const st = statesRef.current.find((s) => s.id === id);
     const ch = charRef.current;
-    if (!st || !ch.image) return false;
+    if (!st || (!ch.image && normalizeMotionMode(st.motionSourceMode) !== "direct")) return false;
 
     const prevItems = st.items;
-    updateState(id, { status: "generating", error: undefined, warnings: [], feedback });
+    const requestId = uid("generation");
+    const motionSourceMode = normalizeMotionMode(st.motionSourceMode);
+    const preferredPipeline = normalizePipeline(st.pipeline ?? settings?.animationPipeline);
+    const actualPipeline: AnimationPipeline =
+      motionSourceMode === "direct" || motionSourceMode === "guide_image_strip"
+        ? "image_strip"
+        : motionSourceMode === "ai_video"
+          ? supportsVideo(settings)
+            ? "video_to_frames"
+            : "image_strip"
+          : preferredPipeline === "video_to_frames" && supportsVideo(settings)
+            ? "video_to_frames"
+            : "image_strip";
+    if (
+      actualPipeline === "video_to_frames" &&
+      normalizeVideoSubjectMode(st.videoSubjectMode) === "auto"
+    ) {
+      const riskTerms = findIPRiskTerms(ch.description, lang === "zh");
+      if (riskTerms.length > 0) {
+        const message = t("ip_review_required", { terms: riskTerms.map((match) => match.term).join("、") });
+        updateState(id, {
+          status: prevItems.length > 0 ? st.status : "idle",
+          error: undefined,
+          progress: undefined,
+          warnings: [...(st.warnings ?? []), message],
+        });
+        toast("info", message);
+        return false;
+      }
+    }
+    updateState(id, {
+      status: "generating",
+      error: undefined,
+      qualityReview: undefined,
+      warnings: [],
+      progress: { phase: "queued", message: t("progress_queued"), percent: 1 },
+      feedback,
+      pipeline: preferredPipeline,
+      motionSourceMode,
+      videoReferenceMode: normalizeVideoReferenceMode(st.videoReferenceMode),
+      videoSubjectMode: normalizeVideoSubjectMode(st.videoSubjectMode),
+      videoPromptLanguage: normalizeVideoPromptLanguage(st.videoPromptLanguage),
+      videoShadowMode: normalizeVideoShadowMode(st.videoShadowMode),
+      frameSamplerMode: normalizeFrameSamplerMode(st.frameSamplerMode),
+      alignmentMode: normalizeAlignmentMode(st.alignmentMode ?? defaultAlignmentMode(actualPipeline, motionSourceMode)),
+      frameFitMode: normalizeFrameFitMode(st.frameFitMode ?? frameFitMode),
+    });
     try {
       // 미러 방향: AI 호출 없이 소스 방향 프레임을 좌우 반전
       if (st.mirrorOf) {
@@ -189,6 +726,7 @@ export default function App() {
             status: "error",
             items: prevItems,
             error: t("err_mirror_source", { dir: directionName(st.mirrorOf, lang) }),
+            progress: undefined,
           });
           return false;
         }
@@ -197,13 +735,17 @@ export default function App() {
           id: uid("fr"),
           png,
           selected: src.items[i]?.selected ?? true,
+          source: "mirror",
         }));
         updateState(id, {
           status: items.length > 0 ? "done" : "error",
           error: items.length > 0 ? undefined : t("err_mirror_fail"),
           items,
+          progress: undefined,
           warnings: [],
           scores: src.scores ? { ...src.scores } : undefined,
+          cellSize: src.cellSize,
+          frameFitMode: src.frameFitMode,
         });
         return items.length > 0;
       }
@@ -216,7 +758,9 @@ export default function App() {
       }
 
       const res: any = await GenerateState({
-        baseImage: ch.image,
+        requestId,
+        stateId: st.id,
+        baseImage: ch.image ?? "",
         description: ch.description,
         styleKey: ch.styleKey,
         styleCustom: ch.styleCustom,
@@ -224,13 +768,29 @@ export default function App() {
         safeMargin: 0,
         feedback,
         refStrip,
+        pipeline: actualPipeline,
+        videoModel: settings?.providers?.[activeVideoProvider(settings)]?.videoModel ?? "",
+        videoSeconds: settings?.videoSeconds ?? 4,
+        videoFps: settings?.videoFps ?? 12,
+        motionSourceId: st.motionSourceId ?? "",
+        motionSourceMode,
+        videoReferenceMode: normalizeVideoReferenceMode(st.videoReferenceMode),
+        videoSubjectMode: normalizeVideoSubjectMode(st.videoSubjectMode),
+        videoPromptLanguage: normalizeVideoPromptLanguage(st.videoPromptLanguage),
+        videoShadowMode: normalizeVideoShadowMode(st.videoShadowMode),
+        frameSamplerMode: normalizeFrameSamplerMode(st.frameSamplerMode),
+        alignmentMode: normalizeAlignmentMode(st.alignmentMode ?? defaultAlignmentMode(actualPipeline, motionSourceMode)),
+        frameFitMode: normalizeFrameFitMode(st.frameFitMode ?? frameFitMode),
         state: { name: st.name, frames: st.frames, fps: st.fps, loop: st.loop, action: st.action, facing: st.facing ?? "" },
       } as any);
 
-      const items: FrameItem[] = (res.frames ?? []).map((png: string) => ({
+      const resultSource = res?.trace?.calledAi ? "ai" : motionSourceMode === "direct" ? "motion_library" : "local";
+      const items: FrameItem[] = (res.frames ?? []).map((png: string, i: number) => ({
         id: uid("fr"),
         png,
         selected: true,
+        source: resultSource,
+        sourceRef: res?.trace?.selections?.find((sel: any) => sel.targetFrameIndex === i)?.candidateId ?? "",
       }));
       const scores = res.scores
         ? {
@@ -245,24 +805,81 @@ export default function App() {
       if (scores && scores.overall < 0.35) {
         extraWarnings.push(t("score_low_warn"));
       }
+      const backendError = typeof res.error === "string" && res.error.trim() ? localizeBackendText(res.error, lang) : "";
+      const hasReturnedFrames = items.length > 0;
+      const needsReview = hasReturnedFrames && !!backendError;
+      const preservedPrevious = !hasReturnedFrames && prevItems.length > 0;
+      const usable = hasReturnedFrames && !needsReview;
       updateState(id, {
-        status: items.length > 0 ? "done" : "error",
-        error: items.length > 0 ? undefined : t("err_no_frames"),
-        items,
-        rawStrip: res.rawStrip || undefined,
-        warnings: [...(res.warnings ?? []), ...extraWarnings],
+        status: usable ? "done" : needsReview ? "review" : preservedPrevious ? (st.status === "review" ? "review" : "done") : "error",
+        error: hasReturnedFrames || preservedPrevious ? undefined : backendError || t("err_no_frames"),
+        qualityReview: needsReview
+          ? { summary: backendError, ignored: false, source: "generation" }
+          : preservedPrevious ? st.qualityReview : undefined,
+        items: hasReturnedFrames ? items : prevItems,
+        progress: undefined,
+        rawStrip: res.rawStrip || st.rawStrip,
+        rawVideoPath: res.rawVideoPath || st.rawVideoPath,
+        rawExtractedFrames: Array.isArray(res.rawExtractedFrames) && res.rawExtractedFrames.length > 0 ? res.rawExtractedFrames : st.rawExtractedFrames ?? [],
+        trace: res.trace || st.trace,
+        candidateFrames: Array.isArray(res.candidateFrames) && res.candidateFrames.length > 0 ? res.candidateFrames : st.candidateFrames ?? [],
+        sequenceMetrics: res.sequenceMetrics ?? st.sequenceMetrics,
+        pipeline: preferredPipeline,
+        lastPipeline: normalizePipeline(res.pipeline ?? actualPipeline),
+        motionSourceId: st.motionSourceId ?? "",
+        motionSourceMode,
+        videoReferenceMode: normalizeVideoReferenceMode(st.videoReferenceMode),
+        videoSubjectMode: normalizeVideoSubjectMode(st.videoSubjectMode),
+        videoPromptLanguage: normalizeVideoPromptLanguage(st.videoPromptLanguage),
+        videoShadowMode: normalizeVideoShadowMode(st.videoShadowMode),
+        frameSamplerMode: normalizeFrameSamplerMode(st.frameSamplerMode),
+        alignmentMode: normalizeAlignmentMode(st.alignmentMode ?? defaultAlignmentMode(actualPipeline, motionSourceMode)),
+        frameFitMode: normalizeFrameFitMode(st.frameFitMode ?? frameFitMode),
+        cellSize: typeof res.cellSize === "number" && res.cellSize > 0 ? res.cellSize : st.cellSize,
+        warnings: [
+          ...(preservedPrevious && backendError ? [localizeBackendText(`本次生成未产出新帧，已保留旧结果：${backendError}`, lang)] : []),
+          ...localizeBackendList(res.warnings, lang),
+          ...extraWarnings,
+        ],
         scores,
       });
-      return items.length > 0;
+      if (res.rawVideoPath) await commitGenerationJournal(String(res.requestId || requestId));
+      return usable;
     } catch (e) {
-      const msg = String(e);
-      if (msg.includes("취소")) {
+      const raw = String(e);
+      const msg = localizeBackendText(raw, lang);
+      let recoveredPending: IPendingGeneration | undefined;
+      try {
+        const pending = ((await ListPendingGenerations()) ?? []) as unknown as IPendingGeneration[];
+        recoveredPending = pending.find((item) => item.requestId === requestId);
+      } catch {
+        // The original error remains the actionable failure.
+      }
+      if (isBackendCancel(raw)) {
         // 취소: 이전 결과를 보존하고 조용히 복귀
-        updateState(id, { status: prevItems.length > 0 ? "done" : "idle", items: prevItems });
+        updateState(id, {
+          status: prevItems.length > 0 ? (st.status === "review" ? "review" : "done") : "idle",
+          items: prevItems,
+          progress: undefined,
+          rawVideoPath: recoveredPending?.rawVideoPath || statesRef.current.find((state) => state.id === id)?.rawVideoPath,
+        });
+        if (recoveredPending) await commitGenerationJournal(requestId);
         toast("info", t("toast_gen_canceled"));
         return false;
       }
-      updateState(id, { status: "error", error: msg });
+      updateState(id, {
+        status: prevItems.length > 0 ? (st.status === "review" ? "review" : "done") : "error",
+        error: prevItems.length > 0 ? undefined : msg,
+        items: prevItems,
+        progress: undefined,
+        rawVideoPath: recoveredPending?.rawVideoPath || statesRef.current.find((state) => state.id === id)?.rawVideoPath,
+        warnings: [
+          ...(st.warnings ?? []),
+          ...(prevItems.length > 0 ? [localizeBackendText(`本次生成失败，已保留旧结果：${msg}`, lang)] : []),
+          ...(recoveredPending ? [localizeBackendText("新原视频已经保存，可在朔源页重新处理。", lang)] : []),
+        ],
+      });
+      if (recoveredPending) await commitGenerationJournal(requestId);
       return false;
     }
   };
@@ -304,6 +921,111 @@ export default function App() {
     setProgress("");
   };
 
+  const handleReprocessVideo = async (id: string) => {
+    if (busy) return;
+    const st = statesRef.current.find((s) => s.id === id);
+    if (!st?.rawVideoPath) return;
+    const prevItems = st.items;
+    setBusy(true);
+    cancelRef.current = false;
+    setSelectedId(id);
+    updateState(id, {
+      status: "generating",
+      error: undefined,
+      qualityReview: undefined,
+      warnings: [],
+      rawStrip: undefined,
+      rawExtractedFrames: [],
+      candidateFrames: [],
+      trace: undefined,
+      scores: undefined,
+      sequenceMetrics: undefined,
+      progress: { phase: "video_reprocess", message: t("reprocess_video_progress"), percent: 1 },
+    });
+    try {
+      const res: any = await ReprocessVideoState({
+        requestId: uid("reprocess"),
+        stateId: st.id,
+        baseImage: charRef.current.image ?? "",
+        styleKey: charRef.current.styleKey,
+        styleCustom: charRef.current.styleCustom,
+        cellSize: cellRef.current,
+        safeMargin: 0,
+        rawVideoPath: st.rawVideoPath,
+        videoSeconds: settings?.videoSeconds ?? 4,
+        frameSamplerMode: normalizeFrameSamplerMode(st.frameSamplerMode),
+        alignmentMode: normalizeAlignmentMode(st.alignmentMode ?? "preserve_source_canvas"),
+        frameFitMode: normalizeFrameFitMode(st.frameFitMode ?? frameFitMode),
+        state: { name: st.name, frames: st.frames, fps: st.fps, loop: st.loop, action: st.action, facing: st.facing ?? "" },
+      } as any);
+      const items: FrameItem[] = (res.frames ?? []).map((png: string, i: number) => ({
+        id: uid("fr"),
+        png,
+        selected: true,
+        source: "local_reprocess",
+        sourceRef: res?.trace?.selections?.find((sel: any) => sel.targetFrameIndex === i)?.candidateId ?? "",
+      }));
+      const scores = res.scores
+        ? {
+            identity: (res.scores as any).identity ?? 0,
+            motion: (res.scores as any).motion ?? 0,
+            contact: (res.scores as any).contact ?? 0,
+            overall: (res.scores as any).overall ?? 0,
+          }
+        : undefined;
+      const backendError = typeof res.error === "string" && res.error.trim() ? localizeBackendText(res.error, lang) : "";
+      const hasReturnedFrames = items.length > 0;
+      const needsReview = hasReturnedFrames && !!backendError;
+      const preservedPrevious = !hasReturnedFrames && prevItems.length > 0;
+      const usable = hasReturnedFrames && !needsReview;
+      updateState(id, {
+        status: usable ? "done" : needsReview ? "review" : preservedPrevious ? (st.status === "review" ? "review" : "done") : "error",
+        error: hasReturnedFrames || preservedPrevious ? undefined : backendError || t("err_no_frames"),
+        qualityReview: needsReview
+          ? { summary: backendError, ignored: false, source: "reprocess" }
+          : preservedPrevious ? st.qualityReview : undefined,
+        items: hasReturnedFrames ? items : prevItems,
+        progress: undefined,
+        rawStrip: res.rawStrip || undefined,
+        rawVideoPath: res.rawVideoPath || st.rawVideoPath,
+        rawExtractedFrames: Array.isArray(res.rawExtractedFrames) ? res.rawExtractedFrames : [],
+        trace: res.trace,
+        candidateFrames: Array.isArray(res.candidateFrames) ? res.candidateFrames : [],
+        sequenceMetrics: res.sequenceMetrics,
+        lastPipeline: "video_to_frames",
+        frameSamplerMode: normalizeFrameSamplerMode(st.frameSamplerMode),
+        alignmentMode: normalizeAlignmentMode(st.alignmentMode ?? "preserve_source_canvas"),
+        frameFitMode: normalizeFrameFitMode(st.frameFitMode ?? frameFitMode),
+        cellSize: typeof res.cellSize === "number" && res.cellSize > 0 ? res.cellSize : st.cellSize,
+        warnings: [
+          ...(preservedPrevious && backendError ? [localizeBackendText(`重新处理未产出新帧，已保留旧结果：${backendError}`, lang)] : []),
+          ...localizeBackendList(res.warnings, lang),
+        ],
+        scores,
+      });
+      toast(usable ? "success" : "info", usable ? t("toast_video_reprocessed") : t("toast_video_reprocess_needs_review"));
+    } catch (e) {
+      const raw = String(e);
+      const msg = localizeBackendText(raw, lang);
+      if (isBackendCancel(raw)) {
+        updateState(id, { status: prevItems.length > 0 ? (st.status === "review" ? "review" : "done") : "idle", items: prevItems, progress: undefined });
+        toast("info", t("toast_gen_canceled"));
+      } else {
+        updateState(id, {
+          status: prevItems.length > 0 ? (st.status === "review" ? "review" : "done") : "error",
+          error: prevItems.length > 0 ? undefined : msg,
+          items: prevItems,
+          progress: undefined,
+          warnings: prevItems.length > 0 ? [...(st.warnings ?? []), localizeBackendText(`重新处理失败，已保留旧结果：${msg}`, lang)] : st.warnings,
+        });
+        toast(prevItems.length > 0 ? "info" : "error", msg);
+      }
+    } finally {
+      setBusy(false);
+      setProgress("");
+    }
+  };
+
   // 8방향 세트: 5방향 AI 생성(south가 정면 레퍼런스) + 3방향 좌우 미러링
   const handleGenerateDirectionSet = async (id: string) => {
     if (busy || directions.length === 0) return;
@@ -326,10 +1048,30 @@ export default function App() {
           ? {
               ...s,
               name: `${base}-south`,
-              label: `${labelBase}·정면`,
+              label: `${labelBase}·${directionName("south", lang)}`,
               dirBase: base,
               facing: "south",
-              ...(keepItems ? {} : { items: [], status: "idle" as const, rawStrip: undefined, warnings: [] }),
+              ...(keepItems
+                ? {}
+                : {
+                    items: [],
+                    status: "idle" as const,
+                    error: undefined,
+                    rawStrip: undefined,
+                    rawVideoPath: undefined,
+                    rawExtractedFrames: [],
+                    warnings: [],
+                    scores: undefined,
+                  }),
+              pipeline: origin.pipeline ?? normalizePipeline(settings?.animationPipeline),
+              motionSourceMode: normalizeMotionMode(origin.motionSourceMode),
+              motionSourceId: origin.motionSourceId ?? "",
+              videoReferenceMode: normalizeVideoReferenceMode(origin.videoReferenceMode),
+              videoSubjectMode: normalizeVideoSubjectMode(origin.videoSubjectMode),
+              videoPromptLanguage: normalizeVideoPromptLanguage(origin.videoPromptLanguage),
+              videoShadowMode: normalizeVideoShadowMode(origin.videoShadowMode),
+              frameSamplerMode: normalizeFrameSamplerMode(origin.frameSamplerMode),
+              alignmentMode: normalizeAlignmentMode(origin.alignmentMode),
             }
           : s
       );
@@ -340,7 +1082,7 @@ export default function App() {
       next.push({
         id: uid("st"),
         name: `${base}-${d.key}`,
-        label: `${labelBase}·${d.label}`,
+        label: `${labelBase}·${directionName(d.key, lang, d.label)}`,
         frames: origin.frames,
         fps: origin.fps,
         loop: origin.loop,
@@ -349,6 +1091,15 @@ export default function App() {
         items: [],
         warnings: [],
         feedback: "",
+        pipeline: origin.pipeline ?? normalizePipeline(settings?.animationPipeline),
+        motionSourceMode: normalizeMotionMode(origin.motionSourceMode),
+        motionSourceId: origin.motionSourceId ?? "",
+        videoReferenceMode: normalizeVideoReferenceMode(origin.videoReferenceMode),
+        videoSubjectMode: normalizeVideoSubjectMode(origin.videoSubjectMode),
+        videoPromptLanguage: normalizeVideoPromptLanguage(origin.videoPromptLanguage),
+        videoShadowMode: normalizeVideoShadowMode(origin.videoShadowMode),
+        frameSamplerMode: normalizeFrameSamplerMode(origin.frameSamplerMode),
+        alignmentMode: normalizeAlignmentMode(origin.alignmentMode),
         facing: d.key,
         dirBase: base,
         mirrorOf: d.mirrorOf || undefined,
@@ -427,15 +1178,18 @@ export default function App() {
     }
   };
 
-  // 커스텀 N개를 한 번에 추가하고 곧바로 순차 생성
-  const handleAddCustomBatch = async (count: number) => {
+  // Custom states are drafts first. Generation only starts from the explicit
+  // button inside the expanded card after choreography has been configured.
+  const handleAddCustomBatch = (count: number) => {
     if (busy) return;
     const n = Math.max(1, Math.min(10, count));
     const base = statesRef.current.length;
     const created: StateDef[] = Array.from({ length: n }, (_, i) => ({
       id: uid("st"),
       name: `custom${base + 1 + i}`,
-      label: "커스텀",
+      label: t("custom"),
+      isCustom: true,
+      customLabel: "",
       frames: 4,
       fps: 8,
       loop: true,
@@ -444,24 +1198,22 @@ export default function App() {
       items: [],
       warnings: [],
       feedback: "",
+      pipeline: normalizePipeline(settings?.animationPipeline),
+      motionSourceMode: "none",
+      videoReferenceMode: "identity_reference",
+      videoSubjectMode: "include_description",
+      videoPromptLanguage: "auto",
+      videoShadowMode: "avoid",
+      frameSamplerMode: "candidate_pool",
+      alignmentMode: defaultAlignmentMode(normalizePipeline(settings?.animationPipeline), "none"),
+      frameFitMode,
     }));
     // statesRef를 즉시 갱신: generateOne이 리렌더 전에 새 상태를 찾을 수 있도록
     statesRef.current = [...statesRef.current, ...created];
     setStates(statesRef.current);
     const ids = created.map((s) => s.id);
     setSelectedId(ids[ids.length - 1]);
-
-    if (!charRef.current.image || !hasActiveKey(settings)) return;
-
-    setBusy(true);
-    cancelRef.current = false;
-    // 배치 전체를 동시성 제한 하에 병렬 생성
-    const ok = await generateBatch(ids);
-    setBusy(false);
-    setProgress("");
-    if (!cancelRef.current) {
-      toast(ok === ids.length ? "success" : "info", t("toast_custom", { ok, total: ids.length }));
-    }
+    toast("info", t("toast_custom_added", { n }));
   };
 
   const handleCancel = () => {
@@ -483,10 +1235,42 @@ export default function App() {
 
   const resetProject = async () => {
     setConfirmNew(false);
-    setCharacter({ image: null, name: "", description: "", styleKey: "pixel", styleCustom: "" });
+    let nextCharacter = emptyCharacter();
+    try {
+      const saved = await SaveCharacterLibraryItem({
+        name: t("unnamed_character"),
+        styleKey: "pixel",
+      } as any) as unknown as CharacterLibraryItem;
+      setCharacterLibrary((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)]);
+      nextCharacter = characterFromLibrary(saved);
+      activeCharacterIdRef.current = saved.id;
+      setActiveCharacterId(saved.id);
+      workspacesRef.current = [{
+        characterId: saved.id,
+        character: nextCharacter,
+        cellSize: 256,
+        frameFitMode: "contain",
+        atlasColumns: 8,
+        states: [],
+        selectedId: null,
+      }];
+    } catch {
+      workspacesRef.current = [];
+      activeCharacterIdRef.current = null;
+      setActiveCharacterId(null);
+    }
+    charRef.current = nextCharacter;
+    statesRef.current = [];
+    selectedRef.current = null;
+    setCharacter(nextCharacter);
     setStates([]);
     setSelectedId(null);
+    cellRef.current = 256;
+    frameFitRef.current = "contain";
+    atlasColumnsRef.current = 8;
     setCellSize(256);
+    setFrameFitMode("contain");
+    setAtlasColumns(8);
     try {
       await ClearSession();
     } catch {
@@ -505,6 +1289,8 @@ export default function App() {
       const outDir: any = await ExportProject({
         character: charRef.current.name.trim() || "character",
         cellSize: cellRef.current,
+        frameFitMode: frameFitRef.current,
+        atlasColumns: atlasColumnsRef.current,
         states: done.map((s) => ({
           name: s.name,
           fps: s.fps,
@@ -517,8 +1303,111 @@ export default function App() {
         RevealInFinder(outDir);
       }
     } catch (e) {
-      toast("error", String(e));
+      toast("error", localizeBackendText(e, lang));
     }
+  };
+
+  const handleExportAnimation = async (id: string, format: "gif" | "mp4") => {
+    const st = statesRef.current.find((s) => s.id === id);
+    if (!st) return;
+    if (st.status === "review") {
+      toast("info", t("quality_review_export_blocked"));
+      return;
+    }
+    const frames = selectedFrames(st).map((f) => f.png);
+    if (frames.length === 0) {
+      toast("error", t("toast_no_export"));
+      return;
+    }
+    try {
+      const path: any = await ExportAnimation({
+        character: charRef.current.name.trim() || "character",
+        name: st.name,
+        fps: st.fps,
+        loop: st.loop,
+        format,
+        frames,
+      } as any);
+      if (path) toast("success", t("toast_animation_exported", { path }));
+    } catch (e) {
+      toast("error", localizeBackendText(e, lang));
+    }
+  };
+
+  const handleImportMotionLibrary = async (kind: "file" | "folder", id: string) => {
+    const st = statesRef.current.find((s) => s.id === id);
+    if (!st || busy) return;
+    try {
+      const payload = {
+        name: composeMotionName(st),
+        action: st.action || st.name,
+        facing: st.facing ?? "",
+        frames: st.frames,
+        fps: st.fps,
+        loop: st.loop,
+        cellSize: cellRef.current,
+        seconds: settings?.videoSeconds ?? 4,
+        tags: [st.name, st.facing ?? ""].filter(Boolean),
+      };
+      const item: any =
+        kind === "folder"
+          ? await ImportMotionLibraryFolder(payload as any)
+          : await ImportMotionLibraryFile(payload as any);
+      if (item?.id) {
+        await refreshMotionLibrary();
+        updateState(id, {
+          motionSourceId: item.id,
+          motionSourceMode: "direct",
+          pipeline: "image_strip",
+          frameSamplerMode: "candidate_pool",
+          alignmentMode: "preserve_source_canvas",
+        });
+        toast("success", t("toast_motion_imported"));
+      }
+    } catch (e) {
+      toast("error", localizeBackendText(e, lang));
+    }
+  };
+
+  const handleSaveStateToMotionLibrary = async (id: string) => {
+    const st = statesRef.current.find((s) => s.id === id);
+    if (!st || st.items.length === 0) return;
+    try {
+      const frames = st.items.map((f) => f.png);
+      const item: any = await SaveMotionLibraryItem({
+        name: composeMotionName(st),
+        action: st.action || st.name,
+        facing: st.facing ?? "",
+        frames: frames.length || st.frames,
+        fps: st.fps,
+        loop: st.loop,
+        assetUse: "direct",
+        sourceKind: st.rawVideoPath ? "video_result" : st.rawStrip ? "image_strip_result" : "manual_frames",
+        sourcePath: st.rawVideoPath ?? "",
+        sourceFps: st.fps,
+        sourceDurationMs: Math.round((frames.length / Math.max(1, st.fps)) * 1000),
+        rawFrames: st.rawExtractedFrames ?? [],
+        processedFrames: frames,
+        candidateFrames: st.candidateFrames ?? [],
+        strip: st.rawStrip ?? "",
+        thumbnail: frames[0] ?? "",
+        tags: [st.name, st.facing ?? "", st.lastPipeline ?? st.pipeline ?? ""].filter(Boolean),
+        directUsable: true,
+        referenceOnly: false,
+        alignmentMode: st.alignmentMode ?? "preserve_source_canvas",
+      } as any);
+      if (item?.id) {
+        await refreshMotionLibrary();
+        toast("success", t("toast_motion_saved"));
+      }
+    } catch (e) {
+      toast("error", localizeBackendText(e, lang));
+    }
+  };
+
+  const composeMotionName = (st: StateDef) => {
+    const facing = st.facing ? ` · ${directionName(st.facing, lang)}` : "";
+    return `${st.label || st.name}${facing}`;
   };
 
   const selectedState = states.find((s) => s.id === selectedId) ?? null;
@@ -529,12 +1418,23 @@ export default function App() {
       <header className="topbar">
         <div className="logo">
           <img className="logo-mark" src={logoUrl} alt={t("logo_alt")} />
+          <span className="brand-copy">
+            <span className="app-name">{t("app_name")}</span>
+            <span className="app-tagline">{t("app_tagline")}</span>
+          </span>
         </div>
+        <ModuleNav value={activeModule} onChange={setActiveModule} />
         <div className="topbar-status">
           {progress && (
             <span className="progress-pill">
               <span className="spinner" />
+              {progressPercent !== null && (
+                <span className="progress-meter" aria-hidden="true">
+                  <span style={{ width: `${progressPercent}%` }} />
+                </span>
+              )}
               {progress}
+              {progressPercent !== null && <strong>{progressPercent}%</strong>}
               <button className="pp-cancel" onClick={handleCancel} title={t("cancel_generation")}>
                 <X size={10} />
               </button>
@@ -542,37 +1442,66 @@ export default function App() {
           )}
         </div>
         <div className="topbar-actions">
-          <Button variant="ghost" size="sm" disabled={busy} onClick={handleNewProject} title={t("new_project_tip")}>
-            <Plus size={13} /> {t("new_project")}
+          {activeModule === "animation" && (
+            <>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={handleNewProject} title={t("new_project_tip")}>
+                <Plus size={13} /> {t("new_project")}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setShowGallery(true)} title={t("gallery_tip")}>
+                <Images size={13} /> {t("gallery")}
+              </Button>
+              <Button size="sm" disabled={!exportable} onClick={handleExport} title={t("export_tip")}>
+                <Package size={13} /> {t("export")}
+              </Button>
+            </>
+          )}
+          <Button variant="ghost" size="sm" onClick={() => setShowToolAssets(true)} title={t("tool_assets_title")}>
+            <LibraryBig size={13} /> {t("tool_assets")}
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setShowGallery(true)} title={t("gallery_tip")}>
-            <Images size={13} /> {t("gallery")}
-          </Button>
-          <Button size="sm" disabled={!exportable} onClick={handleExport} title={t("export_tip")}>
-            <Package size={13} /> {t("export")}
+          <Button variant="ghost" size="sm" onClick={() => setShowToolTasks(true)} title={t("tool_tasks_title")}>
+            <ListTodo size={13} /> {t("tool_tasks")}
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            title={settings ? t("provider_tip", { provider: PROVIDER_LABELS[settings.provider] ?? settings.provider, model: settings.providers?.[settings.provider]?.model ?? "" }) : t("settings_tip")}
+            title={settings
+              ? t("provider_pair_tip", {
+                  image: PROVIDER_LABELS[activeImageProvider(settings)] ?? activeImageProvider(settings),
+                  video: PROVIDER_LABELS[activeVideoProvider(settings)] ?? activeVideoProvider(settings),
+                })
+              : t("settings_tip")}
             onClick={() => setShowSettings(true)}
           >
             <Settings size={13} />
-            {settings ? PROVIDER_LABELS[settings.provider] ?? settings.provider : t("settings")}
-            {settings && !hasActiveKey(settings) && <span className="text-destructive font-bold">!</span>}
+            {settings
+              ? `${PROVIDER_LABELS[activeImageProvider(settings)] ?? activeImageProvider(settings)} / ${PROVIDER_LABELS[activeVideoProvider(settings)] ?? activeVideoProvider(settings)}`
+              : t("settings")}
+            {settings && !hasGenerationKey(settings) && <span className="text-destructive font-bold">!</span>}
           </Button>
         </div>
       </header>
 
-      <main className="workspace">
+      <div className="animation-module-host" hidden={activeModule !== "animation"}>
+        <CharacterSidebar
+          items={characterLibrary}
+          activeId={activeCharacterId}
+          busy={busy}
+          onSelect={handleSelectCharacter}
+          onAdd={handleAddCharacter}
+          onDelete={handleDeleteCharacter}
+        />
+
+        <main className="workspace">
         <section className="panel panel-char">
           <CharacterPanel
             character={character}
             cellSize={cellSize}
+            frameFitMode={frameFitMode}
             busy={busy}
             onChange={setCharacter}
             onCellSize={setCellSize}
-            onError={(m) => (m.includes("취소") ? toast("info", t("toast_gen_canceled")) : toast("error", m))}
+            onFrameFitMode={setFrameFitMode}
+            onError={(m) => (isBackendCancel(m) ? toast("info", t("toast_gen_canceled")) : toast("error", localizeBackendText(m, lang)))}
           />
         </section>
 
@@ -582,8 +1511,14 @@ export default function App() {
             directions={directions}
             presets={presets}
             selectedId={selectedId}
-            canGenerate={!!character.image && hasActiveKey(settings)}
+            canGenerate={!!character.image && hasGenerationKey(settings)}
             hasImage={!!character.image}
+            supportsVideo={supportsVideo(settings)}
+            characterDescription={character.description}
+            defaultPipeline={normalizePipeline(settings?.animationPipeline)}
+            defaultVideoSeconds={settings?.videoSeconds ?? 4}
+            defaultFrameFitMode={frameFitMode}
+            motionLibrary={motionLibrary}
             busy={busy}
             onStates={setStates}
             onSelect={setSelectedId}
@@ -591,6 +1526,7 @@ export default function App() {
             onGenerateAll={handleGenerateAll}
             onAddCustomBatch={handleAddCustomBatch}
             onGenerateDirectionSet={handleGenerateDirectionSet}
+            onImportMotionLibrary={handleImportMotionLibrary}
           />
         </section>
 
@@ -600,14 +1536,37 @@ export default function App() {
             allStates={states}
             directions={directions}
             cellSize={cellSize}
+            atlasColumns={atlasColumns}
             busy={busy}
             onUpdateState={updateState}
             onSelect={setSelectedId}
             onRegenerate={handleRegenerate}
+            onReprocessVideo={handleReprocessVideo}
             onExport={handleExport}
+            onAtlasColumns={setAtlasColumns}
+            onExportAnimation={handleExportAnimation}
+            onSaveMotionLibrary={handleSaveStateToMotionLibrary}
           />
         </section>
-      </main>
+        </main>
+      </div>
+
+      <ToolchainHub
+        activeModule={activeModule}
+        showAssets={showToolAssets}
+        showTasks={showToolTasks}
+        characters={characterLibrary}
+        onModuleChange={setActiveModule}
+        onShowAssets={setShowToolAssets}
+        onShowTasks={setShowToolTasks}
+        onNotify={toast}
+        defaults={{
+          imageProvider: activeImageProvider(settings),
+          imageModel: settings?.providers?.[activeImageProvider(settings)]?.model,
+          videoProvider: activeVideoProvider(settings),
+          videoModel: settings?.providers?.[activeVideoProvider(settings)]?.videoModel,
+        }}
+      />
 
       {showSettings && settings && (
         <SettingsModal
@@ -615,14 +1574,14 @@ export default function App() {
           onClose={() => setShowSettings(false)}
           onSaved={async (msg, keepOpen) => {
             const s = await refreshSettings();
-            if (!keepOpen && hasActiveKey(s)) setShowSettings(false);
+            if (!keepOpen && hasGenerationKey(s)) setShowSettings(false);
             toast("success", msg);
           }}
         />
       )}
 
       {showGallery && (
-        <GalleryModal onClose={() => setShowGallery(false)} onError={(m) => toast("error", m)} />
+        <GalleryModal onClose={() => setShowGallery(false)} onError={(m) => toast("error", localizeBackendText(m, lang))} />
       )}
 
       <Dialog open={confirmNew} onOpenChange={(o) => !o && setConfirmNew(false)}>

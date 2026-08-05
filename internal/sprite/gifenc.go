@@ -13,10 +13,7 @@ func EncodeGIF(frames []*image.NRGBA, fps int, loop bool) ([]byte, error) {
 	if fps < 1 {
 		fps = 8
 	}
-	delay := 100 / fps // centiseconds
-	if delay < 2 {
-		delay = 2
-	}
+	delays := gifFrameDelays(len(frames), fps)
 
 	pal := buildPalette(frames)
 	out := &gif.GIF{}
@@ -48,7 +45,7 @@ func EncodeGIF(frames []*image.NRGBA, fps int, loop bool) ([]byte, error) {
 		return uint8(best)
 	}
 
-	for _, frame := range frames {
+	for frameIndex, frame := range frames {
 		w, h := frame.Rect.Dx(), frame.Rect.Dy()
 		p := image.NewPaletted(image.Rect(0, 0, w, h), pal)
 		for y := 0; y < h; y++ {
@@ -63,7 +60,7 @@ func EncodeGIF(frames []*image.NRGBA, fps int, loop bool) ([]byte, error) {
 			}
 		}
 		out.Image = append(out.Image, p)
-		out.Delay = append(out.Delay, delay)
+		out.Delay = append(out.Delay, delays[frameIndex])
 		out.Disposal = append(out.Disposal, gif.DisposalBackground)
 	}
 
@@ -72,6 +69,30 @@ func EncodeGIF(frames []*image.NRGBA, fps int, loop bool) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// GIF stores frame delays as integer centiseconds. Distributing rounding error
+// across the sequence preserves the configured average FPS instead of making
+// every frame slightly too short.
+func gifFrameDelays(frameCount, fps int) []int {
+	if frameCount <= 0 {
+		return nil
+	}
+	if fps < 1 {
+		fps = 8
+	}
+	out := make([]int, frameCount)
+	previous := 0
+	for i := 0; i < frameCount; i++ {
+		target := ((i+1)*100 + fps/2) / fps
+		delay := target - previous
+		if delay < 1 {
+			delay = 1
+		}
+		out[i] = delay
+		previous += delay
+	}
+	return out
 }
 
 // buildPalette는 프레임 전체에서 최빈 색 255개 + 투명 1개의 팔레트를 만듭니다.

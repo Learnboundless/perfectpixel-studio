@@ -3,13 +3,39 @@
 import {main} from '../models';
 import {sprite} from '../models';
 
+export function AcknowledgeGeneration(arg1:string):Promise<void>;
+
 export function CancelGeneration():Promise<void>;
+
+export function CancelGenerationJob(arg1:string):Promise<main.GenerationJob>;
 
 export function ClearSession():Promise<void>;
 
+export function CreateImageJob(arg1:Record<string, any>):Promise<main.GenerationJob>;
+
+export function CreatePromptOptimizationJob(arg1:Record<string, any>):Promise<main.GenerationJob>;
+
+export function CreateUIAnalysisJob(arg1:Record<string, any>):Promise<main.GenerationJob>;
+
+export function CreateUISplitJob(arg1:Record<string, any>):Promise<main.GenerationJob>;
+
+export function CreateVideoJob(arg1:Record<string, any>):Promise<main.GenerationJob>;
+
+export function DeleteAsset(arg1:string):Promise<void>;
+
+export function DeleteCharacterLibraryItem(arg1:string):Promise<void>;
+
 export function DeleteGalleryImage(arg1:string):Promise<void>;
 
+export function DeleteMotionLibraryItem(arg1:string):Promise<void>;
+
+export function ExportAnimation(arg1:main.ExportAnimationArgs):Promise<string>;
+
+export function ExportAsset(arg1:string):Promise<string>;
+
 export function ExportProject(arg1:main.ExportArgs):Promise<string>;
+
+export function ExportUIProject(arg1:Record<string, any>):Promise<string>;
 
 export function GenerateCharacter(arg1:main.GenerateCharacterArgs):Promise<string>;
 
@@ -17,13 +43,35 @@ export function GenerateState(arg1:main.GenerateStateArgs):Promise<main.StateRes
 
 export function GetGalleryPath():Promise<string>;
 
+export function GetGenerationCapabilities():Promise<main.ToolchainGenerationCapabilities>;
+
+export function GetGenerationJob(arg1:string):Promise<main.GenerationJob>;
+
+export function GetMotionLibraryItem(arg1:string):Promise<main.MotionLibraryItem>;
+
 export function GetSettings():Promise<main.SettingsInfo>;
+
+export function ImportAssets(arg1:Record<string, any>):Promise<Array<main.ToolAsset>>;
+
+export function ImportMotionLibraryFile(arg1:main.ImportMotionLibraryArgs):Promise<main.MotionLibraryItem>;
+
+export function ImportMotionLibraryFolder(arg1:main.ImportMotionLibraryArgs):Promise<main.MotionLibraryItem>;
+
+export function ListAssets():Promise<Array<main.ToolAsset>>;
+
+export function ListCharacterLibrary():Promise<Array<main.CharacterLibraryItem>>;
 
 export function ListDirections():Promise<Array<sprite.DirectionInfo>>;
 
 export function ListFolderImages(arg1:string):Promise<Array<main.GalleryImage>>;
 
 export function ListGalleryImages():Promise<Array<main.GalleryImage>>;
+
+export function ListGenerationJobs():Promise<Array<main.GenerationJob>>;
+
+export function ListMotionLibrary():Promise<Array<main.MotionLibraryItem>>;
+
+export function ListPendingGenerations():Promise<Array<main.PendingGeneration>>;
 
 export function ListPresets():Promise<Array<sprite.PresetInfo>>;
 
@@ -33,18 +81,56 @@ export function LoadImageThumb(arg1:string,arg2:number):Promise<string>;
 
 export function LoadSession():Promise<string>;
 
+export function LoadVideoDataURL(arg1:string):Promise<string>;
+
 export function MirrorFrames(arg1:Array<string>):Promise<Array<string>>;
+
+export function OptimizeCharacterPrompt(arg1:main.RewritePromptArgs):Promise<string>;
 
 export function PickFolder():Promise<string>;
 
 export function PickImage():Promise<string>;
 
+export function RefreshGenerationCapabilities():Promise<main.ToolchainGenerationCapabilities>;
+
+export function ReprocessVideoState(arg1:main.ReprocessVideoStateArgs):Promise<main.StateResult>;
+
+export function RetryGenerationJob(arg1:string):Promise<main.GenerationJob>;
+
 export function RevealInFinder(arg1:string):Promise<void>;
+
+export function RewriteRiskyPrompt(arg1:main.RewritePromptArgs):Promise<string>;
+
+export function SaveAnimationPipeline(arg1:string):Promise<void>;
+
+export function SaveCharacterLibraryItem(arg1:main.SaveCharacterLibraryItemArgs):Promise<main.CharacterLibraryItem>;
+
+export function SaveMotionLibraryItem(arg1:main.SaveMotionLibraryItemArgs):Promise<main.MotionLibraryItem>;
 
 export function SaveProviderKey(arg1:string,arg2:string):Promise<void>;
 
 export function SaveProviderModel(arg1:string,arg2:string):Promise<void>;
 
+export function SaveProviderTextKey(arg1:string,arg2:string):Promise<void>;
+
+export function SaveProviderTextModel(arg1:string,arg2:string):Promise<void>;
+
+export function SaveProviderVideoModel(arg1:string,arg2:string):Promise<void>;
+
+export function SaveProviderVisionModel(arg1:string,arg2:string):Promise<void>;
+
 export function SaveSession(arg1:string):Promise<void>;
 
+export function SaveVideoDefaults(arg1:number,arg2:number):Promise<void>;
+
+export function SendAssetToModule(arg1:Record<string, any>):Promise<Record<string, any>>;
+
+export function SetImageProvider(arg1:string):Promise<void>;
+
 export function SetProvider(arg1:string):Promise<void>;
+
+export function SetTextProvider(arg1:string):Promise<void>;
+
+export function SetVideoProvider(arg1:string):Promise<void>;
+
+export function SetVisionProvider(arg1:string):Promise<void>;

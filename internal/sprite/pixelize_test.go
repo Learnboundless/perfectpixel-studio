@@ -42,6 +42,57 @@ func TestDetectPixelScaleNative(t *testing.T) {
 	}
 }
 
+func TestDetectPixelScaleIgnoresTransparentCanvas(t *testing.T) {
+	colors := []rgb{{230, 230, 240}, {40, 90, 170}, {210, 40, 40}, {20, 25, 35}}
+	sprite := makeBlocky(64, 64, 8, colors)
+	img := image.NewNRGBA(image.Rect(0, 0, 512, 512))
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			src := sprite.PixOffset(x, y)
+			dst := img.PixOffset(224+x, 224+y)
+			copy(img.Pix[dst:dst+4], sprite.Pix[src:src+4])
+		}
+	}
+	if got := DetectPixelScale(img); got != 8 {
+		t.Fatalf("transparent canvas should not dominate scale detection: got %d want 8", got)
+	}
+
+	before := opaquePixelCount(img)
+	frames := []*image.NRGBA{img}
+	PixelPostProcess(frames, 8)
+	after := opaquePixelCount(frames[0])
+	if after < before/2 {
+		t.Fatalf("pixel post-process erased the sprite on a transparent canvas: before=%d after=%d", before, after)
+	}
+}
+
+func TestPixelPostProcessClampsOversizedRunsForSparseSprite(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 512, 512))
+	// Long flat runs inside a small sprite can be 20px+ wide, but they are
+	// color regions, not the sprite's true pixel grid.
+	fillRect(img, 212, 168, 236, 348, 40, 90, 170)
+	fillRect(img, 236, 168, 260, 348, 230, 230, 240)
+	fillRect(img, 260, 168, 284, 348, 40, 90, 170)
+	fillRect(img, 228, 340, 268, 356, 210, 40, 40)
+	fillRect(img, 230, 150, 266, 180, 20, 25, 35)
+
+	rawScale := DetectPixelScale(img)
+	clamped := clampPixelScaleToContent(img, rawScale)
+	if rawScale < 16 {
+		t.Fatalf("test fixture should expose an oversized raw scale, got %d", rawScale)
+	}
+	if clamped >= rawScale || clamped > 8 {
+		t.Fatalf("oversized sparse-sprite scale was not clamped: raw=%d clamped=%d", rawScale, clamped)
+	}
+	before := opaquePixelCount(img)
+	frames := []*image.NRGBA{img}
+	PixelPostProcess(frames, 8)
+	after := opaquePixelCount(frames[0])
+	if after < before/2 {
+		t.Fatalf("clamped pixel post-process erased sparse sprite: before=%d after=%d rawScale=%d clamped=%d", before, after, rawScale, clamped)
+	}
+}
+
 func TestPixelizeSnapsGrid(t *testing.T) {
 	colors := []rgb{{200, 40, 40}, {40, 200, 40}}
 	img := makeBlocky(64, 64, 8, colors)
@@ -116,4 +167,14 @@ func TestPaletteSizeForStyle(t *testing.T) {
 	if PaletteSizeForStyle("cartoon") != 0 || PaletteSizeForStyle("chibi") != 0 || PaletteSizeForStyle("") != 0 {
 		t.Error("non-pixel styles must disable post-processing")
 	}
+}
+
+func opaquePixelCount(img *image.NRGBA) int {
+	n := 0
+	for i := 3; i < len(img.Pix); i += 4 {
+		if img.Pix[i] > alphaThreshold {
+			n++
+		}
+	}
+	return n
 }

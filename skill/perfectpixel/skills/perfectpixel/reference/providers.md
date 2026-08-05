@@ -1,6 +1,6 @@
 # PerfectPixel 프로바이더 / 모델 / 설정
 
-`ppgen`은 4개 이미지 생성 백엔드를 지원한다. 활성 프로바이더와 키는 다음 순서로 해석된다.
+`ppgen`은 여러 이미지 생성 백엔드를 지원한다. 활성 프로바이더와 키는 다음 순서로 해석된다.
 
 1. 설치형 앱 설정 파일 `~/.config/perfectpixel/config.json` (있으면 최우선)
 2. 작업 디렉토리 또는 실행 파일 옆의 `.env` / `.env.local`
@@ -14,9 +14,11 @@
 | 프로바이더 | `-provider` 값 | API 키 환경변수 | 기본 모델 | 대체 모델 |
 |---|---|---|---|---|
 | Gemini (Google AI Studio) | `gemini` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | `gemini-3-pro-image` | `gemini-3-pro-image-preview`, `gemini-2.5-flash-image` |
+| OpenAI | `openai` | `OPENAI_API_KEY` | `gpt-image-2` | `gpt-image-1.5`, `gpt-image-1`, `gpt-image-1-mini` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `google/gemini-3-pro-image-preview` | `google/gemini-2.5-flash-image` |
 | fal.ai | `fal` | `FAL_KEY` / `FAL_API_KEY` | `fal-ai/nano-banana-pro` | `fal-ai/nano-banana`, `fal-ai/flux-pro/v1.1-ultra` |
 | BytePlus (ARK) | `byteplus` | `BYTEPLUS_API_KEY` / `ARK_API_KEY` | `seedream-4-0-250828` | `seedream-3-0-t2i-250415` |
+| ZetaTechs | `zetatechs` | `ZETATECHS_API_KEY` / `ZETA_API_KEY` | `gpt-image-2` | `gpt-image-1.5`, `gpt-image-1`, `gpt-image-1-mini` |
 
 ## .env 예시
 
@@ -26,6 +28,8 @@ GEMINI_API_KEY=
 OPENROUTER_API_KEY=
 FAL_KEY=
 BYTEPLUS_API_KEY=
+ZETATECHS_API_KEY=
+ZETATECHS_BASE_URL=https://ent.zetatechs.com
 ```
 
 ## 스타일 키 (`-style`)

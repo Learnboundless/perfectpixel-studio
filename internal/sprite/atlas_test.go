@@ -42,3 +42,28 @@ func TestComposeManifestV2(t *testing.T) {
 		t.Fatalf("pivot.Y(발 앵커) 오류: %d", a.Pivot.Y)
 	}
 }
+
+func TestComposeAtlasWrapsLongAnimationAcrossRows(t *testing.T) {
+	frames := make([]*image.NRGBA, 10)
+	for i := range frames {
+		frames[i] = image.NewNRGBA(image.Rect(0, 0, 32, 32))
+		fillBox(frames[i], 8, 8, 23, 27, 200, 100, 50)
+	}
+	sheet, manifest := ComposeAtlasWithColumns("hero", []StateFrames{{
+		Spec:   StateSpec{Name: "attack", FPS: 12},
+		Frames: frames,
+	}}, 32, 32, 4)
+	if got := sheet.Bounds().Size(); got.X != 128 || got.Y != 96 {
+		t.Fatalf("跨行精灵表尺寸=%v want 128x96", got)
+	}
+	anim := manifest.Animations["attack"]
+	if anim.Rows != 3 || manifest.Sheet.Columns != 4 || manifest.Sheet.Rows != 3 {
+		t.Fatalf("跨行元数据错误: anim=%+v sheet=%+v", anim, manifest.Sheet)
+	}
+	if got := anim.Rects[4]; got.X != 0 || got.Y != 32 {
+		t.Fatalf("第 5 帧坐标=%+v want x=0 y=32", got)
+	}
+	if got := anim.Rects[9]; got.X != 32 || got.Y != 64 {
+		t.Fatalf("第 10 帧坐标=%+v want x=32 y=64", got)
+	}
+}

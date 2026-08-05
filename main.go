@@ -16,16 +16,18 @@ func main() {
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:     "PerfectPixel",
+		Title:     "动帧像素 MotionPixel",
 		Width:     1440,
 		Height:    920,
 		MinWidth:  1100,
 		MinHeight: 720,
 		AssetServer: &assetserver.Options{
-			Assets: assets,
+			Assets:     assets,
+			Middleware: ToolchainAssetMiddleware(app.toolchainStore),
 		},
 		BackgroundColour: &options.RGBA{R: 14, G: 15, B: 22, A: 1},
 		OnStartup:        app.startup,
+		OnShutdown:       app.shutdown,
 		Bind: []interface{}{
 			app,
 		},
@@ -35,8 +37,8 @@ func main() {
 			WebviewIsTransparent: false,
 			WindowIsTranslucent:  false,
 			About: &mac.AboutInfo{
-				Title:   "PerfectPixel",
-				Message: "AI 기반 애니메이션 스프라이트 생성 스튜디오",
+				Title:   "动帧像素 MotionPixel",
+				Message: "视频与 AI 驱动的动画资产制作工具",
 			},
 		},
 	})

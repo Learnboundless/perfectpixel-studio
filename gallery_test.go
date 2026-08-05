@@ -2,6 +2,8 @@ package main
 
 import (
 	"image"
+	"image/color"
+	"image/gif"
 	"os"
 	"path/filepath"
 	"testing"
@@ -100,5 +102,34 @@ func TestDeleteGalleryImageGuard(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal("거부된 삭제 요청으로 파일이 사라짐")
+	}
+}
+
+func TestWriteGalleryFrameFilesCreatesPlayableGIF(t *testing.T) {
+	dir := t.TempDir()
+	frames := []*image.NRGBA{
+		image.NewNRGBA(image.Rect(0, 0, 8, 8)),
+		image.NewNRGBA(image.Rect(0, 0, 8, 8)),
+	}
+	frames[0].SetNRGBA(1, 1, color.NRGBA{R: 255, A: 255})
+	frames[1].SetNRGBA(6, 1, color.NRGBA{G: 255, A: 255})
+
+	if err := writeGalleryFrameFiles(dir, "walk-final", frames, 8, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "walk-final.png")); err != nil {
+		t.Fatalf("sprite strip missing: %v", err)
+	}
+	f, err := os.Open(filepath.Join(dir, "walk-final.gif"))
+	if err != nil {
+		t.Fatalf("GIF missing: %v", err)
+	}
+	defer f.Close()
+	decoded, err := gif.DecodeAll(f)
+	if err != nil {
+		t.Fatalf("GIF is not decodable: %v", err)
+	}
+	if len(decoded.Image) != len(frames) || decoded.LoopCount != 0 {
+		t.Fatalf("unexpected GIF metadata: frames=%d loop=%d", len(decoded.Image), decoded.LoopCount)
 	}
 }

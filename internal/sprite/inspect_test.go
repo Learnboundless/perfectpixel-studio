@@ -33,6 +33,45 @@ func TestInspectFramesClean(t *testing.T) {
 	}
 }
 
+func TestInspectFramesSmallConsistentSprite(t *testing.T) {
+	key := [3]uint8{255, 0, 255}
+	var frames []*image.NRGBA
+	for i := 0; i < 4; i++ {
+		f := image.NewNRGBA(image.Rect(0, 0, 128, 128))
+		fillRect(f, 44, 44, 84, 84, 40, 80, 200) // 1600px, 작지만 모든 프레임이 일관됨
+		frames = append(frames, f)
+	}
+
+	res := InspectFrames(frames, key, nil)
+	if len(res.Warnings) != 0 {
+		t.Fatalf("일관된 작은 스프라이트에서 경고 발생: %v", res.Warnings)
+	}
+}
+
+func TestInspectFramesContentBelowMedian(t *testing.T) {
+	key := [3]uint8{255, 0, 255}
+	var frames []*image.NRGBA
+	for i := 0; i < 3; i++ {
+		f := image.NewNRGBA(image.Rect(0, 0, 128, 128))
+		fillRect(f, 44, 44, 84, 84, 40, 80, 200) // 1600px
+		frames = append(frames, f)
+	}
+	thin := image.NewNRGBA(image.Rect(0, 0, 128, 128))
+	fillRect(thin, 52, 52, 77, 77, 40, 80, 200) // 625px, 비정상적으로 작진 않지만 누락 의심
+	frames = append(frames, thin)
+
+	res := InspectFrames(frames, key, nil)
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "明显少于其他帧") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("중앙값 대비 콘텐츠 부족 경고 누락: %v", res.Warnings)
+	}
+}
+
 func TestInspectFramesKeyResidue(t *testing.T) {
 	key := [3]uint8{255, 0, 255}
 	f := image.NewNRGBA(image.Rect(0, 0, 128, 128))
@@ -63,7 +102,7 @@ func TestInspectFramesEdgeAndEmpty(t *testing.T) {
 	}
 	foundEdge := false
 	for _, w := range res.Warnings {
-		if strings.Contains(w, "가장자리") {
+		if strings.Contains(w, "碰到边缘") {
 			foundEdge = true
 		}
 	}
@@ -87,7 +126,7 @@ func TestInspectFramesSizeOutlier(t *testing.T) {
 	res := InspectFrames(frames, key, nil)
 	found := false
 	for _, w := range res.Warnings {
-		if strings.Contains(w, "작습니다") {
+		if strings.Contains(w, "明显比其他帧小") {
 			found = true
 		}
 	}

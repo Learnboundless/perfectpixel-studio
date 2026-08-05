@@ -11,18 +11,32 @@ import (
 
 // ProviderCfg는 프로바이더별 키/모델 설정입니다.
 type ProviderCfg struct {
-	APIKey string `json:"apiKey"`
-	Model  string `json:"model"`
+	APIKey      string `json:"apiKey"`
+	Model       string `json:"model"`
+	VideoModel  string `json:"videoModel,omitempty"`
+	TextAPIKey  string `json:"textApiKey,omitempty"`
+	TextModel   string `json:"textModel,omitempty"`
+	VisionModel string `json:"visionModel,omitempty"`
+	BaseURL     string `json:"baseUrl,omitempty"`
 }
 
 // Settings는 사용자 설정입니다.
 type Settings struct {
-	Provider   string      `json:"provider"` // gemini | openai | openrouter | fal | byteplus
-	Gemini     ProviderCfg `json:"gemini"`
-	OpenAI     ProviderCfg `json:"openai"`
-	OpenRouter ProviderCfg `json:"openrouter"`
-	Fal        ProviderCfg `json:"fal"`
-	BytePlus   ProviderCfg `json:"byteplus"`
+	Provider          string      `json:"provider,omitempty"`          // 旧版图片 provider，保留用于兼容迁移
+	ImageProvider     string      `json:"imageProvider,omitempty"`     // gemini | openai | openrouter | fal | byteplus | zetatechs
+	VideoProvider     string      `json:"videoProvider,omitempty"`     // zetatechs | volcengine
+	TextProvider      string      `json:"textProvider,omitempty"`      // volcengine | zetatechs | openai | openrouter
+	VisionProvider    string      `json:"visionProvider,omitempty"`    // zetatechs | openai | openrouter
+	AnimationPipeline string      `json:"animationPipeline,omitempty"` // video_to_frames | image_strip
+	VideoSeconds      int         `json:"videoSeconds,omitempty"`
+	VideoFPS          int         `json:"videoFps,omitempty"`
+	Gemini            ProviderCfg `json:"gemini"`
+	OpenAI            ProviderCfg `json:"openai"`
+	OpenRouter        ProviderCfg `json:"openrouter"`
+	Fal               ProviderCfg `json:"fal"`
+	BytePlus          ProviderCfg `json:"byteplus"`
+	ZetaTechs         ProviderCfg `json:"zetatechs"`
+	Volcengine        ProviderCfg `json:"volcengine"`
 
 	// 레거시 필드 (v1 → 마이그레이션용)
 	LegacyAPIKey string `json:"apiKey,omitempty"`
@@ -40,6 +54,10 @@ func (s *Settings) Cfg(provider string) *ProviderCfg {
 		return &s.Fal
 	case "byteplus":
 		return &s.BytePlus
+	case "zetatechs":
+		return &s.ZetaTechs
+	case "volcengine":
+		return &s.Volcengine
 	default:
 		return &s.Gemini
 	}
@@ -62,6 +80,25 @@ func SessionPath() (string, error) {
 	return filepath.Join(dir, "perfectpixel", "session.json"), nil
 }
 
+// GenerationArtifactsDir stores large generation evidence outside session.json.
+func GenerationArtifactsDir() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "perfectpixel", "generation-artifacts"), nil
+}
+
+// PendingGenerationsPath stores downloaded videos until the frontend commits
+// the corresponding card state to session.json.
+func PendingGenerationsPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "perfectpixel", "pending-generations.json"), nil
+}
+
 // GalleryDir는 생성 이미지가 자동 보관되는 갤러리 디렉토리 경로를 반환합니다.
 func GalleryDir() (string, error) {
 	dir, err := os.UserConfigDir()
@@ -69,6 +106,24 @@ func GalleryDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "perfectpixel", "gallery"), nil
+}
+
+// MotionLibraryDir는 재사용 가능한 동작 소스와 색인 파일이 저장되는 경로를 반환합니다.
+func MotionLibraryDir() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "perfectpixel", "motion-library"), nil
+}
+
+// CharacterLibraryDir stores reusable character identities independently of a session.
+func CharacterLibraryDir() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "perfectpixel", "character-library"), nil
 }
 
 // Load는 설정을 읽고 레거시 마이그레이션 및 환경변수 폴백을 적용합니다.
@@ -107,22 +162,105 @@ func Load() Settings {
 	if s.BytePlus.APIKey == "" {
 		s.BytePlus.APIKey = firstNonEmpty(env["BYTEPLUS_API_KEY"], env["ARK_API_KEY"])
 	}
+	if s.ZetaTechs.APIKey == "" {
+		s.ZetaTechs.APIKey = firstNonEmpty(env["ZETATECHS_API_KEY"], env["ZETA_API_KEY"])
+	}
+	if s.ZetaTechs.BaseURL == "" {
+		s.ZetaTechs.BaseURL = firstNonEmpty(env["ZETATECHS_BASE_URL"], env["ZETATECHS_API_BASE_URL"], env["ZETA_BASE_URL"], env["ZETA_API_BASE_URL"])
+	}
+	if s.ZetaTechs.VideoModel == "" {
+		s.ZetaTechs.VideoModel = firstNonEmpty(env["ZETATECHS_VIDEO_MODEL"], env["ZETA_VIDEO_MODEL"])
+	}
+	if s.Volcengine.APIKey == "" {
+		s.Volcengine.APIKey = firstNonEmpty(env["VOLCENGINE_ARK_API_KEY"], env["ARK_CN_API_KEY"])
+	}
+	if s.Volcengine.VideoModel == "" {
+		s.Volcengine.VideoModel = env["VOLCENGINE_VIDEO_MODEL"]
+	}
+	if s.Volcengine.TextAPIKey == "" {
+		s.Volcengine.TextAPIKey = env["VOLCENGINE_TEXT_API_KEY"]
+	}
+	if s.Volcengine.TextModel == "" {
+		s.Volcengine.TextModel = env["VOLCENGINE_TEXT_MODEL"]
+	}
+	if s.ZetaTechs.TextAPIKey == "" {
+		s.ZetaTechs.TextAPIKey = env["ZETATECHS_TEXT_API_KEY"]
+	}
+	if s.ZetaTechs.TextModel == "" {
+		s.ZetaTechs.TextModel = env["ZETATECHS_TEXT_MODEL"]
+	}
+	if s.ZetaTechs.VisionModel == "" {
+		s.ZetaTechs.VisionModel = env["ZETATECHS_VISION_MODEL"]
+	}
 
-	// 활성 프로바이더 자동 선택: 키가 있는 첫 프로바이더
-	if s.Provider == "" {
+	if s.AnimationPipeline == "" {
+		s.AnimationPipeline = "video_to_frames"
+	}
+	if s.VideoSeconds <= 0 {
+		s.VideoSeconds = 4
+	}
+	if s.VideoFPS <= 0 {
+		s.VideoFPS = 12
+	}
+
+	// v3 단일 provider는 이미지 provider로 마이그레이션합니다.
+	if s.ImageProvider == "" {
+		s.ImageProvider = s.Provider
+	}
+	if s.ImageProvider == "" {
 		switch {
 		case s.Gemini.APIKey != "":
-			s.Provider = "gemini"
+			s.ImageProvider = "gemini"
 		case s.OpenAI.APIKey != "":
-			s.Provider = "openai"
+			s.ImageProvider = "openai"
 		case s.OpenRouter.APIKey != "":
-			s.Provider = "openrouter"
+			s.ImageProvider = "openrouter"
 		case s.Fal.APIKey != "":
-			s.Provider = "fal"
+			s.ImageProvider = "fal"
 		case s.BytePlus.APIKey != "":
-			s.Provider = "byteplus"
+			s.ImageProvider = "byteplus"
+		case s.ZetaTechs.APIKey != "":
+			s.ImageProvider = "zetatechs"
 		default:
-			s.Provider = "gemini"
+			s.ImageProvider = "gemini"
+		}
+	}
+	// 계속 구버전 필드도 동기화해 이전 바이너리에서 설정을 읽을 수 있게 합니다.
+	s.Provider = s.ImageProvider
+	if s.VideoProvider == "" {
+		switch {
+		case s.Volcengine.APIKey != "":
+			s.VideoProvider = "volcengine"
+		case s.ZetaTechs.APIKey != "":
+			s.VideoProvider = "zetatechs"
+		default:
+			s.VideoProvider = "zetatechs"
+		}
+	}
+	if s.TextProvider == "" {
+		switch {
+		case s.Volcengine.TextAPIKey != "" || s.Volcengine.APIKey != "":
+			s.TextProvider = "volcengine"
+		case s.ZetaTechs.TextAPIKey != "" || s.ZetaTechs.APIKey != "":
+			s.TextProvider = "zetatechs"
+		case s.OpenAI.TextAPIKey != "" || s.OpenAI.APIKey != "":
+			s.TextProvider = "openai"
+		case s.OpenRouter.TextAPIKey != "" || s.OpenRouter.APIKey != "":
+			s.TextProvider = "openrouter"
+		default:
+			s.TextProvider = "volcengine"
+		}
+	}
+	if s.VisionProvider == "" {
+		switch {
+		case s.ZetaTechs.APIKey != "":
+			s.VisionProvider = "zetatechs"
+		case s.OpenAI.APIKey != "":
+			s.VisionProvider = "openai"
+		case s.OpenRouter.APIKey != "":
+			s.VisionProvider = "openrouter"
+		default:
+			s.VisionProvider = "zetatechs"
 		}
 	}
 	return s
@@ -163,7 +301,7 @@ func loadEnvFallback() map[string]string {
 	}
 
 	// 2) OS 환경변수 (파일보다 우선)
-	for _, key := range []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "FAL_KEY", "FAL_API_KEY", "BYTEPLUS_API_KEY", "ARK_API_KEY"} {
+	for _, key := range []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "FAL_KEY", "FAL_API_KEY", "BYTEPLUS_API_KEY", "ARK_API_KEY", "ZETATECHS_API_KEY", "ZETA_API_KEY", "ZETATECHS_BASE_URL", "ZETATECHS_API_BASE_URL", "ZETA_BASE_URL", "ZETA_API_BASE_URL", "ZETATECHS_VIDEO_MODEL", "ZETA_VIDEO_MODEL", "ZETATECHS_TEXT_API_KEY", "ZETATECHS_TEXT_MODEL", "VOLCENGINE_ARK_API_KEY", "ARK_CN_API_KEY", "VOLCENGINE_VIDEO_MODEL", "VOLCENGINE_TEXT_API_KEY", "VOLCENGINE_TEXT_MODEL"} {
 		if v := os.Getenv(key); v != "" {
 			out[key] = v
 		}

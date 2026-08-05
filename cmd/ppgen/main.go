@@ -56,7 +56,7 @@ func main() {
 	flag.BoolVar(&opt.all, "all", false, "전체 프리셋 생성 (states/percat 무시)")
 	flag.StringVar(&opt.dirset, "dirset", "", "8방향 세트를 추가 생성할 상태 이름 (선택)")
 	flag.StringVar(&opt.out, "out", "./perfectpixel-out", "출력 디렉토리")
-	flag.StringVar(&opt.provider, "provider", "", "프로바이더 강제 지정 (gemini|openrouter|fal|byteplus)")
+	flag.StringVar(&opt.provider, "provider", "", "프로바이더 강제 지정 (gemini|openai|openrouter|fal|byteplus|zetatechs)")
 	flag.StringVar(&opt.key, "key", "", "API 키 강제 지정 (설정/환경변수보다 우선)")
 	flag.StringVar(&opt.model, "model", "", "모델 강제 지정")
 	flag.IntVar(&opt.attempts, "attempts", 3, "상태별 품질 보정 재생성 최대 시도 횟수")
@@ -103,7 +103,13 @@ func resolveProvider(opt options) (gen.Provider, string, string, error) {
 	if key == "" {
 		return nil, "", "", fmt.Errorf("프로바이더 %q에 API 키가 없습니다 (config.json, .env, 환경변수 또는 -key 사용)", provider)
 	}
-	p, err := gen.New(provider, key, model)
+	var p gen.Provider
+	var err error
+	if provider == gen.ProviderZetaTechs {
+		p = gen.NewZetaTechsWithBaseURL(key, model, cfg.BaseURL)
+	} else {
+		p, err = gen.New(provider, key, model)
+	}
 	if err != nil {
 		return nil, "", "", err
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"perfectpixel/internal/config"
+	"perfectpixel/internal/sprite"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	xdraw "golang.org/x/image/draw"
@@ -42,7 +43,8 @@ var imageExtMime = map[string]string{
 
 const (
 	maxImageFileBytes = 64 << 20 // 단일 이미지 로드 상한
-	maxFolderEntries  = 2000     // 폴더 나열 상한
+	maxVideoFileBytes = 256 << 20
+	maxFolderEntries  = 2000 // 폴더 나열 상한
 )
 
 func ensureGalleryDir() (string, error) {
@@ -114,7 +116,7 @@ func (a *App) ListFolderImages(dir string) ([]GalleryImage, error) {
 
 // PickFolder는 폴더 선택 대화상자를 열고 선택된 경로를 반환합니다 (취소 시 빈 문자열).
 func (a *App) PickFolder() (string, error) {
-	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "이미지 폴더 선택"})
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "选择图片文件夹"})
 }
 
 // DeleteGalleryImage는 갤러리 디렉토리 내부의 이미지만 삭제합니다.
@@ -154,6 +156,35 @@ func (a *App) LoadImageFull(path string) (string, error) {
 	data, mime, err := readImageFile(path)
 	if err != nil {
 		return "", err
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+}
+
+// LoadVideoDataURL은 저장된 원본 생성 비디오를 브라우저에서 재생할 수 있는 data URL로 반환합니다.
+func (a *App) LoadVideoDataURL(path string) (string, error) {
+	clean := filepath.Clean(path)
+	ext := strings.ToLower(filepath.Ext(clean))
+	mime := map[string]string{
+		".mp4":  "video/mp4",
+		".webm": "video/webm",
+		".mov":  "video/quicktime",
+	}[ext]
+	if mime == "" {
+		return "", errors.New("지원하지 않는 비디오 형식입니다")
+	}
+	info, err := os.Stat(clean)
+	if err != nil {
+		return "", fmt.Errorf("비디오 파일을 읽을 수 없습니다: %w", err)
+	}
+	if info.IsDir() {
+		return "", errors.New("비디오 파일이 아니라 폴더입니다")
+	}
+	if info.Size() > maxVideoFileBytes {
+		return "", fmt.Errorf("비디오가 너무 큽니다 (%.1fMB)", float64(info.Size())/(1<<20))
+	}
+	data, err := os.ReadFile(clean)
+	if err != nil {
+		return "", fmt.Errorf("비디오 파일을 읽을 수 없습니다: %w", err)
 	}
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
@@ -201,6 +232,18 @@ func saveGalleryPNG(name string, img image.Image) {
 	_ = writePNG(filepath.Join(dir, name+".png"), img)
 }
 
+func saveGalleryVideo(state string, data []byte) (string, error) {
+	dir, err := ensureGalleryDir()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, fmt.Sprintf("%s-%s.mp4", sanitizeName(state), galleryStamp()))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 // composeStrip는 프레임들을 가로로 이어 붙여 하나의 스프라이트 스트립으로 만듭니다.
 func composeStrip(frames []*image.NRGBA) *image.NRGBA {
 	if len(frames) == 0 {
@@ -227,11 +270,31 @@ func composeStrip(frames []*image.NRGBA) *image.NRGBA {
 	return strip
 }
 
-// saveGalleryFrames는 상태 생성 결과를 하나의 가로 스프라이트 스트립으로 갤러리에 보관합니다.
-func saveGalleryFrames(state string, frames []*image.NRGBA) {
+func writeGalleryFrameFiles(dir, base string, frames []*image.NRGBA, fps int, loop bool) error {
 	strip := composeStrip(frames)
 	if strip == nil {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := writePNG(filepath.Join(dir, base+".png"), strip); err != nil {
+		return err
+	}
+	data, err := sprite.EncodeGIF(frames, fps, loop)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, base+".gif"), data, 0o644)
+}
+
+// saveGalleryFrames keeps both the review strip and the playable final loop.
+// Gallery persistence remains best-effort and never aborts generation.
+func saveGalleryFrames(state string, frames []*image.NRGBA, fps int, loop bool) {
+	dir, err := ensureGalleryDir()
+	if err != nil {
 		return
 	}
-	saveGalleryPNG(fmt.Sprintf("%s-%s", sanitizeName(state), galleryStamp()), strip)
+	base := fmt.Sprintf("%s-%s", sanitizeName(state), galleryStamp())
+	_ = writeGalleryFrameFiles(dir, base, frames, fps, loop)
 }

@@ -6,14 +6,17 @@ import (
 	"math"
 )
 
-// 색차 평면(CbCr) 기반 적응형 매팅 파라미터.
-// 루마(Y)를 무시하고 채도/색상만으로 키를 분리하므로 JPEG 4:2:0 압축에 강건합니다.
+// 色差平面(CbCr)基础的自适应抠像参数。
+// 亮度(Y)容易被视频压缩和阴影污染，所以主要用色相/饱和度分离 key 色。
 const (
-	chromaIn     = 24.0  // CbCr 거리 이 이하 → 완전 투명 (키 색)
-	chromaOut    = 72.0  // CbCr 거리 이 이상 → 완전 불투명 (피사체)
-	despillBand  = 100.0 // 이 거리 안쪽 픽셀은 키 색조 번짐(despill) 보정 대상
-	despillScale = 0.92  // despill 강도 (키 방향 채도 억제율)
-	floodTol     = 88.0  // 테두리 시드 플러드필이 배경으로 간주하는 CbCr 거리(관대)
+	chromaIn     = 24.0  // CbCr 距离小于此值时视为 key 色
+	chromaOut    = 72.0  // CbCr 距离大于此值时视为主体
+	rgbIn        = 38.0  // RGB 距离小于此值时视为 key 色
+	rgbOut       = 120.0 // RGB 距离大于此值时保留为主体
+	despillBand  = 100.0 // 这个范围内会压低 key 色溢色
+	despillScale = 0.92  // key 色溢色修正强度
+	floodTol     = 88.0  // 边缘连通背景的 CbCr 容差
+	floodRGBTol  = 125.0 // 边缘连通背景的 RGB 容差
 )
 
 // ycc는 BT.601 YCbCr 좌표입니다 (8bit, 128 중심).
@@ -89,7 +92,7 @@ func DetectBackground(img *image.NRGBA) [3]uint8 {
 		i := img.PixOffset(x, y)
 		r, g, b := img.Pix[i], img.Pix[i+1], img.Pix[i+2]
 		total++
-		if r > 150 && b > 150 && g < 120 { // 마젠타 계열
+		if isMagentaKey([3]uint8{r, g, b}) {
 			magN++
 			magR += int(r)
 			magG += int(g)
@@ -160,25 +163,19 @@ func DetectBackground(img *image.NRGBA) [3]uint8 {
 func RemoveBackground(src image.Image) *image.NRGBA {
 	img := ToNRGBA(src)
 	key := DetectBackground(img)
-	out, frac := matteWith(img, key)
+	// Only pixels connected to the canvas edge are background. This is the
+	// primary matte for every key color, not just magenta, so white armor on a
+	// white backdrop and enclosed key-colored details remain intact.
+	out, frac := connectedMatteWith(img, key)
 
-	// 안전장치: 넓은 포즈가 테두리를 채워 키를 캐릭터 색으로 오인하면 매팅이
-	// 배경 대신 캐릭터를 지우거나(불투명 비율 급증) 마젠타 배경을 부분만 지운다
-	// (마젠타 잔여 급증). 이 파이프라인은 항상 마젠타 키를 의도하므로, 두 증상 중
-	// 하나라도 보이면 순수 마젠타(#FF00FF)로 폴백 재매팅해 더 나은 쪽을 택한다.
-	if frac > 0.60 || magentaResidueFrac(out) > 0.025 {
-		out2, frac2 := matteWith(img, [3]uint8{255, 0, 255})
-		betterFrac := frac2 < frac-0.03 && frac2 > 0.02
-		lessResidue := magentaResidueFrac(out2) < magentaResidueFrac(out)
-		if (betterFrac || lessResidue) && frac2 > 0.02 {
-			out = out2
-		}
-	}
-	// 검색/다크 배경 fallback: 어두운/무채색 키가 감지되면 pure magenta 매팅도
-	// 시도해 더 나은 쪽(마젠타 잔여가 적은 쪽)을 택한다.
-	if !isMagentaKey(key) {
-		out2, frac2 := matteWith(img, [3]uint8{255, 0, 255})
-		if frac2 > 0.02 && magentaResidueFrac(out2) < magentaResidueFrac(out) {
+	// Generated magenta backgrounds can be dark or compressed enough to skew
+	// the detected key. Retry with the requested canonical key, but retain the
+	// same edge-connected rule so the fallback cannot punch holes in a sprite.
+	if isMagentaKey(key) || magentaResidueFrac(out) > 0.025 {
+		out2, frac2 := connectedMatteWith(img, [3]uint8{255, 0, 255})
+		residue, residue2 := magentaResidueFrac(out), magentaResidueFrac(out2)
+		keepsPlausibleSubject := frac2 > 0.005 && (frac <= 0.005 || frac2 >= frac*0.55)
+		if keepsPlausibleSubject && residue2+0.005 < residue {
 			out = out2
 		}
 	}
@@ -189,14 +186,20 @@ func RemoveBackground(src image.Image) *image.NRGBA {
 // magentaResidueFrac은 순수 마젠타에 가까운(CbCr<55) 불투명 픽셀의 전체 대비 비율입니다.
 // 매팅이 마젠타 배경을 다 지웠는지 판정하는 증상 지표입니다.
 func magentaResidueFrac(img *image.NRGBA) float64 {
-	mk := toYCC(255, 0, 255)
+	return keyResidueFrac(img, [3]uint8{255, 0, 255}, 55)
+}
+
+func keyResidueFrac(img *image.NRGBA, key [3]uint8, tol float64) float64 {
+	kc := toYCC(key[0], key[1], key[2])
 	n := 0
 	for i := 0; i+3 < len(img.Pix); i += 4 {
 		if img.Pix[i+3] <= alphaThreshold {
 			continue
 		}
 		c := toYCC(img.Pix[i], img.Pix[i+1], img.Pix[i+2])
-		if math.Hypot(c.cb-mk.cb, c.cr-mk.cr) < 55 {
+		if math.Hypot(c.cb-kc.cb, c.cr-kc.cr) < tol &&
+			colorDist(img.Pix[i], img.Pix[i+1], img.Pix[i+2], key) <= floodRGBTol &&
+			sameKeyFamily(img.Pix[i], img.Pix[i+1], img.Pix[i+2], key) {
 			n++
 		}
 	}
@@ -209,7 +212,8 @@ func magentaResidueFrac(img *image.NRGBA) float64 {
 
 // isMagentaKey는 키 색이 마젠타 계열(R·B 강, G 약)인지 판정합니다.
 func isMagentaKey(k [3]uint8) bool {
-	return k[0] > 150 && k[2] > 150 && k[1] < 120
+	r, g, b := int(k[0]), int(k[1]), int(k[2])
+	return r > g+40 && b > g+20 && r+b > g*2+80
 }
 
 // matteWith는 주어진 키로 색차 평면 매팅 + despill + 플러드필을 수행하고,
@@ -227,7 +231,8 @@ func matteWith(img *image.NRGBA, key [3]uint8) (*image.NRGBA, float64) {
 		}
 		c := toYCC(r, g, b)
 		dist := math.Hypot(c.cb-kc.cb, c.cr-kc.cr)
-		alpha := smoothstep(chromaIn, chromaOut, dist)
+		rgbDist := colorDist(r, g, b, key)
+		alpha := math.Max(smoothstep(chromaIn, chromaOut, dist), smoothstep(rgbIn, rgbOut, rgbDist))
 		if alpha <= 0 {
 			continue
 		}
@@ -248,7 +253,7 @@ func matteWith(img *image.NRGBA, key [3]uint8) (*image.NRGBA, float64) {
 		out.Pix[i+3] = uint8(float64(a) * alpha)
 	}
 
-	floodClearBackground(out, img, kc)
+	floodClearBackground(out, img, key, kc)
 
 	opaque := 0
 	for i := 3; i < len(out.Pix); i += 4 {
@@ -260,19 +265,68 @@ func matteWith(img *image.NRGBA, key [3]uint8) (*image.NRGBA, float64) {
 	return out, frac
 }
 
+func connectedMatteWith(img *image.NRGBA, key [3]uint8) (*image.NRGBA, float64) {
+	kc := toYCC(key[0], key[1], key[2])
+	out := image.NewNRGBA(img.Rect)
+	copy(out.Pix, img.Pix)
+	floodClearBackground(out, img, key, kc)
+	if isMagentaKey(key) {
+		despillConnectedForeground(out, key, kc)
+	}
+	opaque := 0
+	for i := 3; i < len(out.Pix); i += 4 {
+		if out.Pix[i] > alphaThreshold {
+			opaque++
+		}
+	}
+	frac := float64(opaque) / float64(len(out.Pix)/4)
+	return out, frac
+}
+
+// despillConnectedForeground corrects magenta light that a video model has
+// baked into an edge-isolated subject. connectedMatteWith intentionally keeps
+// the alpha of enclosed pixels, so without this pass pink light survives as
+// opaque character color and is later promoted into the shared sprite palette.
+// Restricting the correction to the key's color family preserves red, blue and
+// neutral regions that are not actually contaminated.
+func despillConnectedForeground(img *image.NRGBA, key [3]uint8, kc ycc) {
+	for i := 0; i+3 < len(img.Pix); i += 4 {
+		if img.Pix[i+3] <= alphaThreshold {
+			continue
+		}
+		r, g, b := img.Pix[i], img.Pix[i+1], img.Pix[i+2]
+		if !sameKeyFamily(r, g, b, key) {
+			continue
+		}
+		c := toYCC(r, g, b)
+		dist := math.Hypot(c.cb-kc.cb, c.cr-kc.cr)
+		if dist >= despillBand {
+			continue
+		}
+		neutralFloor := min(int(r), int(b))
+		if neutralFloor <= int(g) {
+			continue
+		}
+		// A generated magenta light suppresses green rather than behaving like
+		// a conventional alpha composite. Lifting green toward the weaker of R/B
+		// restores white/gray armor without dimming it into charcoal.
+		restoredGreen := float64(g) + float64(neutralFloor-int(g))*despillScale
+		img.Pix[i+1] = u8(restoredGreen)
+	}
+}
+
 // floodClearBackground는 테두리에서 출발해 키 색에 가까운(관대 허용) 픽셀을 따라
 // 4방향 플러드필하며 알파를 0으로 만듭니다. 소프트 매팅만으로는 못 지우는
 // 그라데이션/노이즈 배경(걷기처럼 넓은 포즈가 키를 흔든 경우)을 연결성 기준으로
 // 확실히 제거하되, 테두리와 단절된 내부 캐릭터 픽셀(설령 키색이어도)은 보존합니다.
-func floodClearBackground(out *image.NRGBA, orig *image.NRGBA, kc ycc) {
+func floodClearBackground(out *image.NRGBA, orig *image.NRGBA, key [3]uint8, kc ycc) {
 	w, h := orig.Rect.Dx(), orig.Rect.Dy()
 	if w < 3 || h < 3 {
 		return
 	}
 	isKey := func(x, y int) bool {
 		i := orig.PixOffset(x, y)
-		c := toYCC(orig.Pix[i], orig.Pix[i+1], orig.Pix[i+2])
-		return math.Hypot(c.cb-kc.cb, c.cr-kc.cr) <= floodTol
+		return isFloodKeyPixel(orig.Pix[i], orig.Pix[i+1], orig.Pix[i+2], key, kc)
 	}
 	visited := make([]bool, w*h)
 	stack := make([]int, 0, 4096)
@@ -309,6 +363,39 @@ func floodClearBackground(out *image.NRGBA, orig *image.NRGBA, kc ycc) {
 			push(x, y+1)
 		}
 	}
+}
+
+func isFloodKeyPixel(r, g, b uint8, key [3]uint8, kc ycc) bool {
+	c := toYCC(r, g, b)
+	if math.Hypot(c.cb-kc.cb, c.cr-kc.cr) > floodTol {
+		return false
+	}
+	if colorDist(r, g, b, key) > floodRGBTol {
+		return false
+	}
+	return sameKeyFamily(r, g, b, key)
+}
+
+func sameKeyFamily(r, g, b uint8, key [3]uint8) bool {
+	if !isMagentaKey(key) {
+		return true
+	}
+	kr, kb := max(int(key[0]), 1), int(key[2])
+	pr, pg, pb := max(int(r), 1), int(g), int(b)
+	if pr <= pg+25 || pb <= pg+8 {
+		return false
+	}
+	keyBlueRatio := float64(kb) / float64(kr)
+	pixelBlueRatio := float64(pb) / float64(pr)
+	if keyBlueRatio >= 0.45 && pixelBlueRatio < keyBlueRatio*0.68 {
+		return false
+	}
+	keyRedBlueGap := kr - kb
+	allowedRedBlueGap := max(35, keyRedBlueGap+35)
+	if pr-pb > allowedRedBlueGap {
+		return false
+	}
+	return true
 }
 
 // cleanupAlpha는 고립된 불투명 점(JPEG 블록 잡티)을 제거하고 1px 핀홀을 메웁니다.

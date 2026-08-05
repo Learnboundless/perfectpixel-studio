@@ -15,10 +15,39 @@ type StateSpec struct {
 
 // ExtractResult는 스트립에서 프레임을 추출한 결과입니다.
 type ExtractResult struct {
-	Frames   []*image.NRGBA
-	Found    int
-	Expected int
-	Warnings []string
+	Frames        []*image.NRGBA
+	FrameMeta     []FrameMeta
+	Candidates    []*image.NRGBA
+	CandidateMeta []FrameMeta
+	Sequence      FrameSequenceMetrics
+	Found         int
+	Expected      int
+	Warnings      []string
+}
+
+// FrameMeta records where a generated/extracted frame came from.
+type FrameMeta struct {
+	Index         int     `json:"index"`
+	TimeMs        int     `json:"timeMs,omitempty"`
+	SourcePath    string  `json:"sourcePath,omitempty"`
+	Quality       float64 `json:"quality,omitempty"`
+	Motion        float64 `json:"motion,omitempty"`
+	Similarity    float64 `json:"similarity,omitempty"`
+	Continuity    float64 `json:"continuity,omitempty"`
+	NearDuplicate bool    `json:"nearDuplicate,omitempty"`
+	Reason        string  `json:"reason,omitempty"`
+	Selected      bool    `json:"selected,omitempty"`
+}
+
+// FrameSequenceMetrics explains why a selected animation sequence is usable.
+// Values are normalized to [0,1], except DuplicateRate where lower is better.
+type FrameSequenceMetrics struct {
+	DuplicateRate  float64 `json:"duplicateRate"`
+	Continuity     float64 `json:"continuity"`
+	MotionCoverage float64 `json:"motionCoverage"`
+	LoopClosure    float64 `json:"loopClosure,omitempty"`
+	ActiveStartMs  int     `json:"activeStartMs,omitempty"`
+	ActiveEndMs    int     `json:"activeEndMs,omitempty"`
 }
 
 // StateFrames는 아틀라스 합성에 들어가는 상태별 최종 프레임입니다.
@@ -45,6 +74,7 @@ type Point struct {
 // Rects는 셀 좌표, Trims는 셀 내 콘텐츠 bbox(로컬 좌표), Pivot은 공통 발 앵커입니다.
 type AnimationEntry struct {
 	Row        int         `json:"row"`
+	Rows       int         `json:"rows"`
 	Frames     int         `json:"frames"`
 	FPS        int         `json:"fps"`
 	Loop       bool        `json:"loop"`
@@ -72,4 +102,6 @@ type SheetInfo struct {
 	Height     int    `json:"height"`
 	CellWidth  int    `json:"cellWidth"`
 	CellHeight int    `json:"cellHeight"`
+	Columns    int    `json:"columns"`
+	Rows       int    `json:"rows"`
 }

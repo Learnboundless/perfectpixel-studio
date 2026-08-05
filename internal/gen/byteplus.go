@@ -62,7 +62,7 @@ type bpResponse struct {
 // GenerateImage는 BytePlus Seedream으로 이미지를 생성합니다.
 func (c *BytePlus) GenerateImage(ctx context.Context, prompt string, refImages [][]byte, aspectRatio string) ([]byte, error) {
 	if c.APIKey == "" {
-		return nil, errors.New("BytePlus API 키가 설정되지 않았습니다. 설정에서 입력해 주세요")
+		return nil, errors.New("BytePlus API 密钥未设置，请在设置中输入")
 	}
 
 	reqData := bpRequest{
@@ -81,7 +81,7 @@ func (c *BytePlus) GenerateImage(ctx context.Context, prompt string, refImages [
 
 	body, err := json.Marshal(reqData)
 	if err != nil {
-		return nil, fmt.Errorf("요청 직렬화 실패: %w", err)
+		return nil, fmt.Errorf("请求序列化失败: %w", err)
 	}
 
 	var lastErr error
@@ -100,6 +100,9 @@ func (c *BytePlus) GenerateImage(ctx context.Context, prompt string, refImages [
 			return img, nil
 		}
 		lastErr = err
+		if paidRequestRetriesDisabled(ctx) {
+			return nil, err
+		}
 		if !retryable {
 			return nil, err
 		}
@@ -123,13 +126,13 @@ func (c *BytePlus) doRequest(ctx context.Context, body []byte) (img []byte, retr
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, true, fmt.Errorf("네트워크 오류: %w", err)
+		return nil, true, fmt.Errorf("网络错误: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
-		return nil, true, fmt.Errorf("응답 읽기 실패: %w", err)
+		return nil, true, fmt.Errorf("响应读取失败: %w", err)
 	}
 
 	var parsed bpResponse
@@ -138,39 +141,39 @@ func (c *BytePlus) doRequest(ctx context.Context, body []byte) (img []byte, retr
 	if resp.StatusCode != http.StatusOK {
 		retryable = resp.StatusCode == 429 || resp.StatusCode >= 500
 		if parsed.Error != nil && parsed.Error.Message != "" {
-			return nil, retryable, fmt.Errorf("BytePlus 오류 (%d): %s", resp.StatusCode, parsed.Error.Message)
+			return nil, retryable, fmt.Errorf("BytePlus 错误 (%d): %s", resp.StatusCode, parsed.Error.Message)
 		}
-		return nil, retryable, fmt.Errorf("BytePlus 오류 (HTTP %d)", resp.StatusCode)
+		return nil, retryable, fmt.Errorf("BytePlus 错误 (HTTP %d)", resp.StatusCode)
 	}
 	if parsed.Error != nil && parsed.Error.Message != "" {
-		return nil, true, fmt.Errorf("BytePlus 오류: %s", parsed.Error.Message)
+		return nil, true, fmt.Errorf("BytePlus 错误: %s", parsed.Error.Message)
 	}
 	if len(parsed.Data) == 0 {
-		return nil, true, errors.New("응답에 이미지가 없습니다")
+		return nil, true, errors.New("响应中没有图片")
 	}
 	d := parsed.Data[0]
 	if d.B64JSON != "" {
 		data, err := base64.StdEncoding.DecodeString(d.B64JSON)
 		if err != nil {
-			return nil, false, fmt.Errorf("이미지 디코딩 실패: %w", err)
+			return nil, false, fmt.Errorf("图片解码失败: %w", err)
 		}
 		return data, false, nil
 	}
 	if d.URL != "" {
-		data, err := decodeDataOrDownload(c.HTTP, d.URL)
+		data, err := decodeDataOrDownloadContext(ctx, c.HTTP, d.URL)
 		if err != nil {
 			return nil, false, err
 		}
 		return data, false, nil
 	}
-	return nil, true, errors.New("응답에 이미지가 없습니다")
+	return nil, true, errors.New("响应中没有图片")
 }
 
 // ValidateKey는 BytePlus 키 형식을 확인합니다 (경량 검증 엔드포인트가 없음).
 func (c *BytePlus) ValidateKey(_ context.Context) error {
 	key := strings.TrimSpace(c.APIKey)
 	if len(key) < 10 {
-		return errors.New("API 키가 너무 짧습니다")
+		return errors.New("API 密钥太短")
 	}
 	return nil
 }

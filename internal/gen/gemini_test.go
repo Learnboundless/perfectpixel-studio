@@ -51,7 +51,7 @@ func TestGeminiModelFallback(t *testing.T) {
 	if string(img) != string(fakePNG) {
 		t.Fatalf("이미지 바이트 불일치")
 	}
-	want := []string{DefaultModel, "gemini-3-pro-image-preview", "gemini-3.1-flash-image"}
+	want := []string{DefaultModel, "gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview"}
 	if len(calledModels) != len(want) {
 		t.Fatalf("호출 모델 시퀀스 오류: %v", calledModels)
 	}
@@ -178,7 +178,7 @@ func TestGeminiImageSizeOnlyForPro(t *testing.T) {
 	if sizeByModel[DefaultModel] != "2K" {
 		t.Fatalf("Pro 모델에 2K 누락: %v", sizeByModel)
 	}
-	if sizeByModel["gemini-3.1-flash-image"] != "" {
+	if sizeByModel["gemini-3.1-flash-image-preview"] != "" {
 		t.Fatalf("폴백 모델에 imageSize가 포함됨: %v", sizeByModel)
 	}
 }

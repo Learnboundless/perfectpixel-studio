@@ -3,6 +3,7 @@ package sprite
 import (
 	"fmt"
 	"image"
+	"sort"
 
 	xdraw "golang.org/x/image/draw"
 )
@@ -71,10 +72,15 @@ func extractContent(strip *image.NRGBA, span colSpan, h int) frameContent {
 // 만듭니다. 모든 프레임에 공통 스케일을 적용하고, 질량 중심으로 수평 정렬하며,
 // 공통 베이스라인 기준으로 수직 오프셋(점프 호 등)을 보존합니다.
 func ExtractFrames(strip *image.NRGBA, expected, cellW, cellH, margin int) ExtractResult {
+	return ExtractFramesWithFitMode(strip, expected, cellW, cellH, margin, FrameFitContain)
+}
+
+func ExtractFramesWithFitMode(strip *image.NRGBA, expected, cellW, cellH, margin int, fitMode string) ExtractResult {
 	res := ExtractResult{Expected: expected}
+	fitMode = NormalizeFrameFitMode(fitMode)
 	segs, natural := segmentStrip(strip, expected)
 	if len(segs) == 0 {
-		res.Warnings = append(res.Warnings, "이미지에서 캐릭터를 찾지 못했습니다. 다시 생성해 주세요.")
+		res.Warnings = append(res.Warnings, "没有在图片中找到角色，请重新生成。")
 		return res
 	}
 	h := strip.Rect.Dy()
@@ -87,8 +93,12 @@ func ExtractFrames(strip *image.NRGBA, expected, cellW, cellH, margin int) Extra
 		}
 	}
 	if len(fcs) == 0 {
-		res.Warnings = append(res.Warnings, "유효한 포즈를 찾지 못했습니다. 다시 생성해 주세요.")
+		res.Warnings = append(res.Warnings, "没有找到有效姿势，请重新生成。")
 		return res
+	}
+	if repaired, warnings := repairStripOverflowContents(fcs, expected, strip.Rect.Dx()); len(warnings) > 0 {
+		fcs = repaired
+		res.Warnings = append(res.Warnings, warnings...)
 	}
 
 	// 공통 베이스라인 + 공유 스케일
@@ -113,15 +123,32 @@ func ExtractFrames(strip *image.NRGBA, expected, cellW, cellH, margin int) Extra
 			maxBodyH = bh
 		}
 	}
+	if fitMode == FrameFitAutoExpand {
+		maxContent := max(maxBodyW, maxBodyH)
+		for _, g := range fcs {
+			maxContent = max(maxContent, max(g.img.Rect.Dx(), g.img.Rect.Dy()))
+		}
+		expanded := maxContent + margin*2
+		cellW = max(cellW, expanded)
+		cellH = max(cellH, expanded)
+		availW = cellW - margin*2
+		availH = cellH - margin*2
+	}
 	scale := minf(float64(availW)/float64(maxBodyW), float64(availH)/float64(maxBodyH))
 	if scale > 1 {
+		scale = 1
+	}
+	if fitMode == FrameFitCrop || fitMode == FrameFitAutoExpand {
 		scale = 1
 	}
 
 	for _, g := range fcs {
 		// scale은 body extent 기준으로 계산했으므로, 그 외 바운딩 박스 빈 공간은
 		// 여유 공간에 맞춰 조정한다.
-		boxScale := minf(scale, minf(float64(availW)/float64(g.img.Rect.Dx()), float64(availH)/float64(g.img.Rect.Dy())))
+		boxScale := scale
+		if fitMode == FrameFitContain {
+			boxScale = minf(scale, minf(float64(availW)/float64(g.img.Rect.Dx()), float64(availH)/float64(g.img.Rect.Dy())))
+		}
 		if boxScale > 1 {
 			boxScale = 1
 		}
@@ -146,26 +173,317 @@ func ExtractFrames(strip *image.NRGBA, expected, cellW, cellH, margin int) Extra
 		// 질량 중심이 셀 중앙에 오도록 수평 배치 (팔다리가 한쪽으로 뻗어도
 		// 면적이 큰 몸통이 지배해 프레임 간 흔들림이 적음).
 		left := int(float64(cellW)/2 - (g.cx-float64(g.minX))*boxScale + 0.5)
-		if left < 0 {
+		if fitMode != FrameFitCrop && left < 0 {
 			left = 0
 		}
-		if left+sw > cellW {
+		if fitMode != FrameFitCrop && left+sw > cellW {
 			left = cellW - sw
 		}
 		top := cellH - margin - contentBaseline - sh
-		if top < 0 {
+		if fitMode != FrameFitCrop && top < 0 {
 			top = 0
 		}
 		xdraw.Copy(cell, image.Point{X: left, Y: top}, scaled, scaled.Rect, xdraw.Over, nil)
 		res.Frames = append(res.Frames, cell)
 	}
 
-	res.Found = natural
-	if natural != expected {
+	res.Found = len(res.Frames)
+	if res.Found != expected {
 		res.Warnings = append(res.Warnings,
-			fmt.Sprintf("기대한 %d개와 다른 %d개의 포즈가 감지되었습니다. 포즈가 겹쳤거나 누락됐을 수 있어 재생성을 권장합니다.", expected, natural))
+			fmt.Sprintf("检测到 %d 个姿势，而不是期望的 %d 个。可能有姿势重叠或缺失，建议重新生成。", res.Found, expected))
+	} else if natural != expected {
+		res.Warnings = append(res.Warnings,
+			fmt.Sprintf("检测到的自然姿势数为 %d，已按期望的 %d 帧完成修复输出。", natural, expected))
 	}
 	return res
+}
+
+type frameContentMetric struct {
+	mass         float64
+	maxColH      int
+	opaquePixels int
+}
+
+func repairStripOverflowContents(fcs []frameContent, expected, stripW int) ([]frameContent, []string) {
+	if expected < 2 || stripW <= 0 || len(fcs) == 0 {
+		return fcs, nil
+	}
+	out, merged := mergeOverflowFragments(fcs, expected, stripW)
+	padded := false
+	if len(out) < expected && expected-len(out) <= max(1, expected/4) {
+		out, padded = padFrameContentsToExpectedSlots(out, expected, stripW)
+	}
+	if !merged && !padded {
+		return fcs, nil
+	}
+
+	var warnings []string
+	switch {
+	case merged && padded:
+		warnings = append(warnings, "检测到某个姿势、武器或外轮廓越过了预期帧边界，已把碎片并回相邻帧并用相邻有效姿势补齐缺失帧。建议重新生成时扩大画布或增加列间距。")
+	case merged:
+		warnings = append(warnings, "检测到某个姿势、武器或外轮廓越过了预期帧边界，已把碎片并回相邻帧。建议重新生成时扩大画布或增加列间距。")
+	case padded:
+		warnings = append(warnings, "检测到图片条带存在空列或缺失帧，已用相邻有效姿势补齐，避免碎片帧进入导出结果。建议重新生成时扩大画布或增加列间距。")
+	}
+	return out, warnings
+}
+
+func mergeOverflowFragments(fcs []frameContent, expected, stripW int) ([]frameContent, bool) {
+	if len(fcs) < 2 {
+		return fcs, false
+	}
+	metrics := make([]frameContentMetric, len(fcs))
+	masses := make([]float64, 0, len(fcs))
+	heights := make([]int, 0, len(fcs))
+	for i, fc := range fcs {
+		metrics[i] = measureFrameContent(fc)
+		if metrics[i].mass > 0 {
+			masses = append(masses, metrics[i].mass)
+		}
+		if metrics[i].maxColH > 0 {
+			heights = append(heights, metrics[i].maxColH)
+		}
+	}
+	medianMass := medianFloat(masses)
+	medianHeight := medianInt(heights)
+	if medianMass <= 0 || medianHeight <= 0 {
+		return fcs, false
+	}
+
+	isFragment := make([]bool, len(fcs))
+	for i, m := range metrics {
+		isFragment[i] = isOverflowFragment(m, medianMass, medianHeight)
+	}
+	out := make([]frameContent, 0, len(fcs))
+	merged := false
+	slotW := max(1, stripW/expected)
+	maxGap := max(8, slotW/2)
+	for i := 0; i < len(fcs); i++ {
+		if !isFragment[i] {
+			out = append(out, fcs[i])
+			continue
+		}
+
+		leftIdx := -1
+		if len(out) > 0 {
+			leftIdx = len(out) - 1
+		}
+		rightIdx := -1
+		if i+1 < len(fcs) && !isFragment[i+1] {
+			rightIdx = i + 1
+		}
+		mergeLeft := false
+		mergeRight := false
+		leftGap, rightGap := maxGap+1, maxGap+1
+		if leftIdx >= 0 {
+			leftGap = contentEdgeGap(out[leftIdx], fcs[i])
+			mergeLeft = leftGap <= maxGap
+		}
+		if rightIdx >= 0 {
+			rightGap = contentEdgeGap(fcs[i], fcs[rightIdx])
+			mergeRight = rightGap <= maxGap
+		}
+		switch {
+		case mergeLeft && (!mergeRight || leftGap <= rightGap):
+			out[leftIdx] = mergeFrameContents(out[leftIdx], fcs[i])
+			merged = true
+		case mergeRight:
+			fcs[rightIdx] = mergeFrameContents(fcs[i], fcs[rightIdx])
+			merged = true
+		default:
+			out = append(out, fcs[i])
+		}
+	}
+	if !merged {
+		return fcs, false
+	}
+	return out, true
+}
+
+func measureFrameContent(fc frameContent) frameContentMetric {
+	if fc.img == nil {
+		return frameContentMetric{}
+	}
+	w, h := fc.img.Rect.Dx(), fc.img.Rect.Dy()
+	colH := make([]int, w)
+	var metric frameContentMetric
+	for x := 0; x < w; x++ {
+		for y := 0; y < h; y++ {
+			a := fc.img.Pix[fc.img.PixOffset(x, y)+3]
+			if a <= alphaThreshold {
+				continue
+			}
+			metric.mass += float64(a)
+			metric.opaquePixels++
+			colH[x]++
+		}
+		if colH[x] > metric.maxColH {
+			metric.maxColH = colH[x]
+		}
+	}
+	return metric
+}
+
+func isOverflowFragment(m frameContentMetric, medianMass float64, medianHeight int) bool {
+	if m.mass <= 0 || medianMass <= 0 || medianHeight <= 0 {
+		return false
+	}
+	if m.mass < medianMass*0.28 {
+		return true
+	}
+	return m.mass < medianMass*0.55 && float64(m.maxColH) < float64(medianHeight)*0.45
+}
+
+func contentEdgeGap(a, b frameContent) int {
+	aStart, aEnd := a.minX, a.minX+a.img.Rect.Dx()
+	bStart, bEnd := b.minX, b.minX+b.img.Rect.Dx()
+	if aEnd < bStart {
+		return bStart - aEnd
+	}
+	if bEnd < aStart {
+		return aStart - bEnd
+	}
+	return 0
+}
+
+func mergeFrameContents(a, b frameContent) frameContent {
+	if a.img == nil {
+		return b
+	}
+	if b.img == nil {
+		return a
+	}
+	aMinX, aMinY, aMaxX, aMaxY := frameContentBounds(a)
+	bMinX, bMinY, bMaxX, bMaxY := frameContentBounds(b)
+	minX, minY := min(aMinX, bMinX), min(aMinY, bMinY)
+	maxX, maxY := max(aMaxX, bMaxX), max(aMaxY, bMaxY)
+	dst := image.NewNRGBA(image.Rect(0, 0, maxX-minX+1, maxY-minY+1))
+	copyFrameContent(dst, minX, minY, a)
+	copyFrameContent(dst, minX, minY, b)
+
+	var sumWX, sumW float64
+	for x := 0; x < dst.Rect.Dx(); x++ {
+		globalX := minX + x
+		for y := 0; y < dst.Rect.Dy(); y++ {
+			alpha := dst.Pix[dst.PixOffset(x, y)+3]
+			if alpha <= alphaThreshold {
+				continue
+			}
+			sumWX += float64(globalX) * float64(alpha)
+			sumW += float64(alpha)
+		}
+	}
+	cx := float64(minX+maxX+1) / 2
+	if sumW > 0 {
+		cx = sumWX / sumW
+	}
+	return frameContent{img: dst, minX: minX, cx: cx, bottom: maxY}
+}
+
+func frameContentBounds(fc frameContent) (minX, minY, maxX, maxY int) {
+	minX = fc.minX
+	minY = fc.bottom - fc.img.Rect.Dy() + 1
+	maxX = minX + fc.img.Rect.Dx() - 1
+	maxY = fc.bottom
+	return
+}
+
+func copyFrameContent(dst *image.NRGBA, originX, originY int, fc frameContent) {
+	minX, minY, _, _ := frameContentBounds(fc)
+	for y := 0; y < fc.img.Rect.Dy(); y++ {
+		for x := 0; x < fc.img.Rect.Dx(); x++ {
+			src := fc.img.PixOffset(x, y)
+			if fc.img.Pix[src+3] <= alphaThreshold {
+				continue
+			}
+			di := dst.PixOffset(minX-originX+x, minY-originY+y)
+			copy(dst.Pix[di:di+4], fc.img.Pix[src:src+4])
+		}
+	}
+}
+
+func padFrameContentsToExpectedSlots(fcs []frameContent, expected, stripW int) ([]frameContent, bool) {
+	if len(fcs) == 0 || len(fcs) >= expected || stripW <= 0 {
+		return fcs, false
+	}
+	occupied := make([]bool, expected)
+	slots := make([]frameContent, expected)
+	for _, fc := range fcs {
+		slot := int(fc.cx * float64(expected) / float64(stripW))
+		if slot < 0 {
+			slot = 0
+		}
+		if slot >= expected {
+			slot = expected - 1
+		}
+		if occupied[slot] {
+			slot = nearestEmptySlot(slot, occupied)
+			if slot < 0 {
+				return fcs, false
+			}
+		}
+		slots[slot] = fc
+		occupied[slot] = true
+	}
+	for i := 0; i < expected; i++ {
+		if occupied[i] {
+			continue
+		}
+		src := nearestOccupiedSlot(i, occupied)
+		if src < 0 {
+			return fcs, false
+		}
+		slots[i] = slots[src]
+		occupied[i] = true
+	}
+	return slots, true
+}
+
+func nearestEmptySlot(slot int, occupied []bool) int {
+	for d := 1; d < len(occupied); d++ {
+		left := slot - d
+		if left >= 0 && !occupied[left] {
+			return left
+		}
+		right := slot + d
+		if right < len(occupied) && !occupied[right] {
+			return right
+		}
+	}
+	return -1
+}
+
+func nearestOccupiedSlot(slot int, occupied []bool) int {
+	for d := 1; d < len(occupied); d++ {
+		left := slot - d
+		if left >= 0 && occupied[left] {
+			return left
+		}
+		right := slot + d
+		if right < len(occupied) && occupied[right] {
+			return right
+		}
+	}
+	return -1
+}
+
+func medianFloat(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+	return sorted[len(sorted)/2]
+}
+
+func medianInt(values []int) int {
+	if len(values) == 0 {
+		return 0
+	}
+	sorted := append([]int(nil), values...)
+	sort.Ints(sorted)
+	return sorted[len(sorted)/2]
 }
 
 // bodyExtent는 알파 질량 80%를 포함하는 최소 크기를 "실제 바디" extent로 반환합니다.

@@ -154,14 +154,14 @@ export const styleLabel = (key: string, lang: Lang, fallback = key) => pick(STYL
 // 상태 카드/헤더 표시명을 현재 언어로 구성한다.
 // 프리셋 name이면 카탈로그 라벨, custom이면 customWord, 8방향 세트면 방향 접미사를 붙인다.
 export function composeStateLabel(
-  s: { name: string; label: string; dirBase?: string; facing?: string },
+  s: { name: string; label: string; isCustom?: boolean; customLabel?: string; dirBase?: string; facing?: string },
   lang: Lang,
   customWord: string
 ): string {
   const base = s.dirBase ?? s.name;
   let baseLabel: string;
   if (PRESET_LABELS[base]) baseLabel = presetLabel(base, lang);
-  else if (base.startsWith("custom")) baseLabel = customWord;
+  else if (s.isCustom || base.startsWith("custom")) baseLabel = s.customLabel?.trim() || customWord;
   else baseLabel = s.label;
   if (s.dirBase && s.facing) return `${baseLabel}·${directionName(s.facing, lang)}`;
   return baseLabel;

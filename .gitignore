@@ -1,10 +1,16 @@
 build/bin
 node_modules
 frontend/dist
+.tools/
 
 .env*
 !.env.example
 frontend/package.json.md5
+.wails-dev.log
+.wails-dev.*.log
+.vite-dev.log
+.gocache/
+.codex/
 .DS_Store
 
 # 검증 하니스 빌드 산출물

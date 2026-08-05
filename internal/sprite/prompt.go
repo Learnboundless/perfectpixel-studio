@@ -124,7 +124,8 @@ func BuildStripPrompt(description, style string, spec StateSpec, feedback string
 	fmt.Fprintf(&b, "Draw a single horizontal row of exactly %d game-sprite poses of one character for the \"%s\" animation, ordered left to right. This is raw sprite art, not a photo or a film — draw only the character poses on a flat background.\n\n", n, spec.Name)
 
 	b.WriteString("Subject lock (top priority):\n")
-	b.WriteString("- The attached image is the canonical character. Match it exactly across every pose: face, hairstyle, build, outfit, accessories.\n")
+	b.WriteString("- The FIRST attached image is the canonical character. Match it exactly across every pose: face, hairstyle, build, outfit, accessories.\n")
+	b.WriteString("- Copy that character first, then pose the copy. Do not invent a new costume, proportions, hairstyle, weapon, colors, species, age, or facial design.\n")
 	b.WriteString("- Palette is binding. Re-sample each region's hue, saturation and value from the reference — skin, hair, every garment, every piece of gear. Do not re-tint, re-light, brighten, darken, or substitute a similar shade.\n")
 	b.WriteString("- Hold one fixed camera and facing. The figure never rotates, mirrors, ages, or restyles between poses — only the body moves.\n\n")
 
@@ -172,6 +173,65 @@ func BuildStripPrompt(description, style string, spec StateSpec, feedback string
 	b.WriteString("- Favor changes of pose, weight and expression over decoration; any effect must be opaque, hard-edged, and fused to the body.\n")
 	b.WriteString("- Keep every pose legible at thumbnail size: bold silhouette, clear limbs, no detail that vanishes when shrunk.\n")
 
+	if f := strings.TrimSpace(feedback); f != "" {
+		fmt.Fprintf(&b, "\nArtist revision (apply over everything above): %s\n", f)
+	}
+	return b.String()
+}
+
+// BuildVideoPrompt는 상태별 짧은 캐릭터 애니메이션 비디오 프롬프트를 만듭니다.
+func BuildVideoPrompt(description, style string, spec StateSpec, feedback string, seconds int) string {
+	return BuildVideoPromptWithOptions(description, style, spec, feedback, seconds, true)
+}
+
+func BuildVideoPromptWithOptions(description, style string, spec StateSpec, feedback string, seconds int, avoidFootShadow bool) string {
+	if seconds <= 0 {
+		seconds = 4
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Create a %d-second image-to-video animation of the attached game character performing the \"%s\" animation.\n\n", seconds, spec.Name)
+	b.WriteString("Reference lock (highest priority):\n")
+	b.WriteString("- The attached image is the canonical character identity. Preserve the exact face, hairstyle, outfit, accessories, proportions, palette and sprite style.\n")
+	b.WriteString("- Animate that same character only. Do not redesign, re-costume, rotate into a different character, change colors, change species, add extra characters, or change camera style.\n\n")
+	if d := strings.TrimSpace(description); d != "" {
+		fmt.Fprintf(&b, "Subject notes: %s.\n\n", d)
+	}
+	fmt.Fprintf(&b, "Render contract: %s\n\n", style)
+	if extra := pixelStyleContracts(style); extra != "" {
+		b.WriteString(extra)
+		b.WriteString("\n")
+	}
+	if sec := FacingPromptSection(spec.Facing); sec != "" {
+		b.WriteString(sec)
+		b.WriteString("\n")
+	}
+	action := strings.TrimSpace(spec.Action)
+	if action == "" {
+		action = spec.Name
+	}
+	fmt.Fprintf(&b, "Movement: %s.\n", action)
+	if hint := MotionHint(spec.Name); hint != "" {
+		fmt.Fprintf(&b, "Choreography: %s\n", hint)
+	}
+	if spec.Loop {
+		b.WriteString("Loop requirement: make the final moment return naturally to the first pose so extracted frames can loop cleanly.\n\n")
+	} else {
+		b.WriteString("One-shot requirement: show a clear anticipation, peak action, and recovery/settle.\n\n")
+	}
+	b.WriteString("Video staging for sprite extraction:\n")
+	b.WriteString("- Fixed orthographic camera, no zoom, no pan, no rotation, no cuts, no transitions.\n")
+	b.WriteString("- Recompose the reference onto a wider safety shot: the complete character, weapon, shield, hair, cape and every moving limb must remain visible in every frame. Never inherit a tight crop from the attached image.\n")
+	b.WriteString("- Keep the character within the central 60% of the canvas at all times, with at least 20% empty background on the left, right and above, plus clear space below the feet.\n")
+	b.WriteString("- Frame for the most extreme action pose before animation begins. Pull the camera back enough for full weapon extension, jumps and follow-through; never crop any body part or attached prop.\n")
+	b.WriteString("- Full body visible in every frame, centered, with generous padding and feet/ground line stable unless the action jumps.\n")
+	b.WriteString("- Flat single-color keying background, preferably pure magenta #FF00FF, filling the entire frame edge to edge.\n")
+	b.WriteString("- No scenery, floor texture, motion blur, depth of field, particles, speed lines, subtitles, text, UI, watermark, or extra props not attached to the character.\n")
+	if avoidFootShadow {
+		b.WriteString("- Strict shadow ban: no foot shadow, contact shadow, cast shadow, oval blob, ambient occlusion, reflection, floor, platform or pedestal. Every pixel beneath and around the feet must remain exactly the flat keying background color.\n")
+	} else {
+		b.WriteString("- A small stable contact shadow directly beneath the feet is allowed, but no large cast shadow, textured floor, reflection, platform or pedestal.\n")
+	}
+	b.WriteString("- Movement should be readable and continuous, with pose changes strong enough that evenly sampled frames form a clear sprite animation.\n")
 	if f := strings.TrimSpace(feedback); f != "" {
 		fmt.Fprintf(&b, "\nArtist revision (apply over everything above): %s\n", f)
 	}

@@ -1,8 +1,10 @@
 <div align="center">
 
-# PerfectPixel
+# MotionPixel
 
-**AI 기반 애니메이션 스프라이트 생성 스튜디오**
+**비디오와 AI 기반 애니메이션 에셋 스튜디오**
+
+MotionPixel은 MIT 라이선스 PerfectPixel 프로젝트를 기반으로 독립 유지보수되는 확장판입니다.
 
 캐릭터 설명 한 줄로 베이스 캐릭터를 만들고, 걷기·달리기·공격·마법 등 100여 가지 동작 애니메이션과
 8방향 스프라이트 세트를 자동 생성해 — 게임 엔진이 바로 임포트할 수 있는 형식으로 내보냅니다.
@@ -16,7 +18,7 @@
 
 [English](README.md) · **한국어**
 
-<img src="samples/power-up.gif" alt="PerfectPixel로 생성한 픽셀아트 파워업 애니메이션" width="280" />
+<img src="samples/power-up.gif" alt="MotionPixel로 생성한 픽셀아트 파워업 애니메이션" width="280" />
 
 <sub>실제 파이프라인(`gemini-3-pro-image`)으로 처음부터 끝까지 생성한 파워업 애니메이션.</sub>
 
@@ -50,7 +52,7 @@ AI는 이 조건들을 잘 지키지 못합니다. 프레임 수가 틀리고, �
 - **진짜 픽셀아트화**: 공유 팔레트 양자화 + 픽셀 그리드 스냅으로 스타일에 맞는 도트 결과물을 만듭니다.
 - **게임 엔진 친화 내보내기**: 스프라이트시트 + `manifest.json` + Aseprite 호환 JSON + 상태별
   GIF/APNG + 개별 프레임 PNG를 한 번에 출력합니다.
-- **멀티 프로바이더**: Gemini, OpenRouter, fal.ai, BytePlus 중 원하는 백엔드를 선택합니다.
+- **멀티 프로바이더**: Gemini, OpenAI, OpenRouter, fal.ai, BytePlus, ZetaTechs 중 원하는 백엔드를 선택합니다.
 - **세션 저장/복원 · 갤러리**: 작업 상태를 디스크에 보관하고, 생성 결과를 갤러리에 자동 보관합니다.
 
 ## 샘플 출력
@@ -205,11 +207,15 @@ hash**(9×8 grayscale, 구조 민감·색 불변 — histogram이 못 잡는 sil
 | 프로바이더 | 기본 모델 | API 키 환경변수 |
 |-----------|----------|----------------|
 | **Gemini** (기본) | `gemini-3-pro-image` (Nano Banana Pro) | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
+| **OpenAI** | `gpt-image-2` | `OPENAI_API_KEY` |
 | **OpenRouter** | `google/gemini-3-pro-image-preview` | `OPENROUTER_API_KEY` |
 | **fal.ai** | `fal-ai/nano-banana-pro` | `FAL_KEY` / `FAL_API_KEY` |
 | **BytePlus** | `seedream-4-0-250828` (Seedream 4.0) | `BYTEPLUS_API_KEY` / `ARK_API_KEY` |
+| **ZetaTechs** | `gpt-image-2` | `ZETATECHS_API_KEY` / `ZETA_API_KEY` |
 
 > 설정 파일의 키가 환경변수보다 우선합니다. 키가 설정된 첫 프로바이더가 자동 활성화됩니다.
+> ZetaTechs는 기본 NewAPI 게이트웨이로 `https://ent.zetatechs.com`을 사용합니다. 토큰이 다른
+> 게이트웨이에 속하면 `ZETATECHS_BASE_URL` / `ZETA_BASE_URL`로 덮어쓰세요.
 
 ## 설치 및 실행
 

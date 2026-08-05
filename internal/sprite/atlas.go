@@ -8,14 +8,29 @@ import (
 
 // ComposeAtlas는 상태별 프레임을 행 단위로 배치한 스프라이트시트와 매니페스트를 만듭니다.
 func ComposeAtlas(character string, states []StateFrames, cellW, cellH int) (*image.NRGBA, Manifest) {
+	return ComposeAtlasWithColumns(character, states, cellW, cellH, 0)
+}
+
+// ComposeAtlasWithColumns allows long animations to wrap across rows while
+// preserving explicit per-frame rectangles in the manifest.
+func ComposeAtlasWithColumns(character string, states []StateFrames, cellW, cellH, maxColumns int) (*image.NRGBA, Manifest) {
 	maxFrames := 1
 	for _, s := range states {
 		if len(s.Frames) > maxFrames {
 			maxFrames = len(s.Frames)
 		}
 	}
-	sheetW := maxFrames * cellW
-	sheetH := len(states) * cellH
+	columns := maxFrames
+	if maxColumns > 0 && columns > maxColumns {
+		columns = maxColumns
+	}
+	columns = max(1, columns)
+	totalRows := 0
+	for _, s := range states {
+		totalRows += max(1, (len(s.Frames)+columns-1)/columns)
+	}
+	sheetW := columns * cellW
+	sheetH := max(1, totalRows) * cellH
 	sheet := image.NewNRGBA(image.Rect(0, 0, sheetW, sheetH))
 
 	manifest := Manifest{
@@ -30,25 +45,31 @@ func ComposeAtlas(character string, states []StateFrames, cellW, cellH int) (*im
 			Height:     sheetH,
 			CellWidth:  cellW,
 			CellHeight: cellH,
+			Columns:    columns,
+			Rows:       totalRows,
 		},
 		Animations: map[string]AnimationEntry{},
 	}
 
-	for row, s := range states {
+	row := 0
+	for _, s := range states {
 		fps := s.Spec.FPS
 		if fps <= 0 {
 			fps = 8
 		}
 		entry := AnimationEntry{
 			Row:        row,
+			Rows:       max(1, (len(s.Frames)+columns-1)/columns),
 			Frames:     len(s.Frames),
 			FPS:        fps,
 			Loop:       s.Spec.Loop,
 			DurationMs: 1000 / fps,
 		}
 		groundY := 0
-		for col, frame := range s.Frames {
-			x, y := col*cellW, row*cellH
+		for index, frame := range s.Frames {
+			col := index % columns
+			frameRow := row + index/columns
+			x, y := col*cellW, frameRow*cellH
 			xdraw.Copy(sheet, image.Point{X: x, Y: y}, frame, frame.Rect, xdraw.Over, nil)
 			entry.Rects = append(entry.Rects, FrameRect{X: x, Y: y, W: cellW, H: cellH})
 			trim := contentBBox(frame)
@@ -69,6 +90,7 @@ func ComposeAtlas(character string, states []StateFrames, cellW, cellH int) (*im
 		}
 		entry.Pivot = Point{X: cellW / 2, Y: groundY}
 		manifest.Animations[s.Spec.Name] = entry
+		row += entry.Rows
 	}
 	return sheet, manifest
 }

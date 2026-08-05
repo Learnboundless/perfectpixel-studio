@@ -23,11 +23,12 @@ const DefaultModel = "gemini-3-pro-image"
 // 404(모델 없음)일 때만 순서대로 시도합니다.
 var modelFallbacks = []string{
 	"gemini-3-pro-image-preview",
+	"gemini-3.1-flash-image-preview",
 	"gemini-3.1-flash-image",
 	"gemini-2.5-flash-image",
 }
 
-var errModelNotFound = errors.New("요청한 모델을 찾을 수 없습니다")
+var errModelNotFound = errors.New("找不到请求的模型")
 
 const apiEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent"
 
@@ -101,7 +102,7 @@ type apiError struct {
 // aspectRatio는 "1:1", "16:9", "21:9" 등을 지원하며 빈 문자열이면 생략됩니다.
 func (c *Client) GenerateImage(ctx context.Context, prompt string, refImages [][]byte, aspectRatio string) ([]byte, error) {
 	if c.APIKey == "" {
-		return nil, errors.New("API 키가 설정되지 않았습니다. 설정에서 Gemini API 키를 입력해 주세요")
+		return nil, errors.New("API 密钥未设置，请在设置中输入 Gemini API 密钥")
 	}
 
 	parts := make([]genPart, 0, len(refImages)+1)
@@ -134,7 +135,7 @@ func (c *Client) GenerateImage(ctx context.Context, prompt string, refImages [][
 	}
 	reqBody, err := buildBody(c.Model)
 	if err != nil {
-		return nil, fmt.Errorf("요청 직렬화 실패: %w", err)
+		return nil, fmt.Errorf("请求序列化失败: %w", err)
 	}
 
 	var lastErr error
@@ -164,9 +165,12 @@ func (c *Client) GenerateImage(ctx context.Context, prompt string, refImages [][
 			fallbacks = fallbacks[1:]
 			tried[model] = true
 			if reqBody, err = buildBody(model); err != nil {
-				return nil, fmt.Errorf("요청 직렬화 실패: %w", err)
+				return nil, fmt.Errorf("请求序列化失败: %w", err)
 			}
 			continue
+		}
+		if paidRequestRetriesDisabled(ctx) {
+			return nil, err
 		}
 		if !retryable {
 			return nil, err
@@ -205,45 +209,45 @@ func (c *Client) doRequest(ctx context.Context, model string, body []byte) (img 
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, false, err
 		}
-		return nil, true, fmt.Errorf("네트워크 오류: %w", err)
+		return nil, true, fmt.Errorf("网络错误: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
-		return nil, true, fmt.Errorf("응답 읽기 실패: %w", err)
+		return nil, true, fmt.Errorf("响应读取失败: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, false, fmt.Errorf("모델 %q: %w", model, errModelNotFound)
+			return nil, false, fmt.Errorf("模型 %q: %w", model, errModelNotFound)
 		}
 		retryable = resp.StatusCode == 429 || resp.StatusCode >= 500
 		var parsed genResponse
 		if json.Unmarshal(respBytes, &parsed) == nil && parsed.Error != nil {
-			return nil, retryable, fmt.Errorf("Gemini API 오류 (%d): %s", resp.StatusCode, parsed.Error.Message)
+			return nil, retryable, fmt.Errorf("Gemini API 错误 (%d): %s", resp.StatusCode, parsed.Error.Message)
 		}
-		return nil, retryable, fmt.Errorf("Gemini API 오류 (HTTP %d)", resp.StatusCode)
+		return nil, retryable, fmt.Errorf("Gemini API 错误 (HTTP %d)", resp.StatusCode)
 	}
 
 	var parsed genResponse
 	if err := json.Unmarshal(respBytes, &parsed); err != nil {
-		return nil, false, fmt.Errorf("응답 파싱 실패: %w", err)
+		return nil, false, fmt.Errorf("响应解析失败: %w", err)
 	}
 	if len(parsed.Candidates) == 0 {
-		return nil, true, errors.New("이미지 생성 결과가 비어 있습니다")
+		return nil, true, errors.New("图片生成结果为空")
 	}
 	for _, part := range parsed.Candidates[0].Content.Parts {
 		if part.InlineData != nil && part.InlineData.Data != "" {
 			data, err := base64.StdEncoding.DecodeString(part.InlineData.Data)
 			if err != nil {
-				return nil, false, fmt.Errorf("이미지 디코딩 실패: %w", err)
+				return nil, false, fmt.Errorf("图片解码失败: %w", err)
 			}
 			return data, false, nil
 		}
 	}
 	reason := parsed.Candidates[0].FinishReason
-	return nil, true, fmt.Errorf("응답에 이미지가 없습니다 (사유: %s)", reason)
+	return nil, true, fmt.Errorf("响应中没有图片 (原因: %s)", reason)
 }
 
 // ValidateKey는 API 키 유효성을 가볍게 확인합니다.
@@ -256,14 +260,14 @@ func (c *Client) ValidateKey(ctx context.Context) error {
 	req.Header.Set("x-goog-api-key", c.APIKey)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return fmt.Errorf("네트워크 오류: %w", err)
+		return fmt.Errorf("网络错误: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
 	if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 403 {
-		return errors.New("API 키가 유효하지 않습니다")
+		return errors.New("API 密钥无效")
 	}
-	return fmt.Errorf("키 확인 실패 (HTTP %d)", resp.StatusCode)
+	return fmt.Errorf("密钥校验失败 (HTTP %d)", resp.StatusCode)
 }

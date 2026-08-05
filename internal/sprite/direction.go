@@ -18,14 +18,14 @@ type DirectionInfo struct {
 
 // Directions는 8방향 전체 목록입니다 (3x3 그리드 순서).
 var Directions = []DirectionInfo{
-	{Key: "north-west", Label: "¾ 뒤·좌", Short: "NW", MirrorOf: "north-east", Row: 0, Col: 0},
-	{Key: "north", Label: "뒷면", Short: "N", Row: 0, Col: 1},
-	{Key: "north-east", Label: "¾ 뒤·우", Short: "NE", Row: 0, Col: 2},
-	{Key: "west", Label: "좌측면", Short: "W", MirrorOf: "east", Row: 1, Col: 0},
-	{Key: "east", Label: "우측면", Short: "E", Row: 1, Col: 2},
-	{Key: "south-west", Label: "¾ 앞·좌", Short: "SW", MirrorOf: "south-east", Row: 2, Col: 0},
-	{Key: "south", Label: "정면", Short: "S", Row: 2, Col: 1},
-	{Key: "south-east", Label: "¾ 앞·우", Short: "SE", Row: 2, Col: 2},
+	{Key: "north-west", Label: "3/4 后左", Short: "NW", MirrorOf: "north-east", Row: 0, Col: 0},
+	{Key: "north", Label: "背面", Short: "N", Row: 0, Col: 1},
+	{Key: "north-east", Label: "3/4 后右", Short: "NE", Row: 0, Col: 2},
+	{Key: "west", Label: "左侧面", Short: "W", MirrorOf: "east", Row: 1, Col: 0},
+	{Key: "east", Label: "右侧面", Short: "E", Row: 1, Col: 2},
+	{Key: "south-west", Label: "3/4 前左", Short: "SW", MirrorOf: "south-east", Row: 2, Col: 0},
+	{Key: "south", Label: "正面", Short: "S", Row: 2, Col: 1},
+	{Key: "south-east", Label: "3/4 前右", Short: "SE", Row: 2, Col: 2},
 }
 
 // GeneratedDirections는 AI로 생성하는 방향 순서입니다 (south가 정면 레퍼런스라 첫 번째).

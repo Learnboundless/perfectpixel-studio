@@ -16,7 +16,7 @@ export const LANGUAGES: { code: Lang; label: string }[] = [
 
 const DICTS: Record<Lang, Record<string, string>> = { en, es, ko, zh };
 const STORAGE_KEY = "pp.lang";
-const DEFAULT_LANG: Lang = "en";
+const DEFAULT_LANG: Lang = "zh";
 
 function readStoredLang(): Lang {
   try {

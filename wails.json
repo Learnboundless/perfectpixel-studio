@@ -1,11 +1,12 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "perfectpixel",
-  "outputfilename": "perfectpixel",
+  "name": "动帧像素 MotionPixel",
+  "outputfilename": "motionpixel",
+  "frontend:dir": "frontend",
   "frontend:install": "npm install",
   "frontend:build": "npm run build",
-  "frontend:dev:watcher": "npm run dev",
-  "frontend:dev:serverUrl": "auto",
+  "frontend:dev:watcher": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/wails-dev-frontend.ps1",
+  "frontend:dev:serverUrl": "http://127.0.0.1:5190",
   "author": {
     "name": "",
     "email": ""

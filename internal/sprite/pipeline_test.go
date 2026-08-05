@@ -1,9 +1,11 @@
 package sprite
 
 import (
+	"bytes"
 	"image"
 	"image/color"
 	"image/draw"
+	"image/gif"
 	"testing"
 )
 
@@ -159,6 +161,17 @@ func TestEncodeGIF(t *testing.T) {
 	}
 	if len(data) < 100 || string(data[:6]) != "GIF89a" {
 		t.Fatalf("GIF 형식 오류 (len=%d)", len(data))
+	}
+	decoded, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("GIF decode failed: %v", err)
+	}
+	totalDelay := 0
+	for _, delay := range decoded.Delay {
+		totalDelay += delay
+	}
+	if totalDelay != 50 {
+		t.Fatalf("GIF timing should preserve 4 frames / 8 FPS = 0.5s, delays=%v total=%dcs", decoded.Delay, totalDelay)
 	}
 }
 

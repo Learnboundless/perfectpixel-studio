@@ -35,7 +35,7 @@ func TestInspectDriftConsistent(t *testing.T) {
 	}
 	res := InspectFrames(frames, [3]uint8{255, 0, 255}, nil)
 	for _, e := range res.Errors {
-		if strings.Contains(e, "색 구성") {
+		if strings.Contains(e, "颜色组成") {
 			t.Errorf("consistent frames flagged as drift: %s", e)
 		}
 	}
@@ -58,7 +58,7 @@ func TestInspectDriftDetected(t *testing.T) {
 	res := InspectFrames(frames, [3]uint8{255, 0, 255}, nil)
 	found := false
 	for _, e := range res.Errors {
-		if strings.Contains(e, "프레임 3") && strings.Contains(e, "색 구성") {
+		if strings.Contains(e, "第 3 帧") && strings.Contains(e, "颜色组成") {
 			found = true
 		}
 	}
@@ -90,7 +90,7 @@ func TestInspectBaseDrift(t *testing.T) {
 	res := InspectFrames(frames, [3]uint8{255, 0, 255}, base)
 	found := false
 	for _, e := range res.Errors {
-		if strings.Contains(e, "베이스 캐릭터") {
+		if strings.Contains(e, "基础角色") {
 			found = true
 		}
 	}
@@ -106,7 +106,7 @@ func TestInspectBaseDrift(t *testing.T) {
 	}
 	res = InspectFrames(same, [3]uint8{255, 0, 255}, base)
 	for _, e := range res.Errors {
-		if strings.Contains(e, "베이스 캐릭터") {
+		if strings.Contains(e, "基础角色") {
 			t.Errorf("동일 캐릭터가 베이스 드리프트로 오탐: %s", e)
 		}
 	}
@@ -118,7 +118,7 @@ func TestInspectBaseDrift(t *testing.T) {
 	}
 	res = InspectFrames(frames, [3]uint8{255, 0, 255}, opaque)
 	for _, e := range res.Errors {
-		if strings.Contains(e, "베이스 캐릭터") {
+		if strings.Contains(e, "基础角色") {
 			t.Errorf("불투명 베이스에서 검사가 실행됨: %s", e)
 		}
 	}

@@ -60,7 +60,7 @@ func (c *Fal) endpoint(hasRefs bool) string {
 // GenerateImage는 fal.ai로 이미지를 생성합니다.
 func (c *Fal) GenerateImage(ctx context.Context, prompt string, refImages [][]byte, aspectRatio string) ([]byte, error) {
 	if c.APIKey == "" {
-		return nil, errors.New("fal.ai API 키가 설정되지 않았습니다. 설정에서 입력해 주세요")
+		return nil, errors.New("fal.ai API 密钥未设置，请在设置中输入")
 	}
 
 	reqData := falRequest{
@@ -97,7 +97,7 @@ func (c *Fal) GenerateImage(ctx context.Context, prompt string, refImages [][]by
 		}
 		body, err := json.Marshal(send)
 		if err != nil {
-			return nil, fmt.Errorf("요청 직렬화 실패: %w", err)
+			return nil, fmt.Errorf("请求序列化失败: %w", err)
 		}
 
 		img, status, err := c.doRequest(ctx, url, body)
@@ -110,6 +110,9 @@ func (c *Fal) GenerateImage(ctx context.Context, prompt string, refImages [][]by
 		if status == 422 && withAspect {
 			withAspect = false
 			continue
+		}
+		if paidRequestRetriesDisabled(ctx) {
+			return nil, err
 		}
 		if status != 429 && status < 500 && status != 0 {
 			return nil, err
@@ -128,13 +131,13 @@ func (c *Fal) doRequest(ctx context.Context, url string, body []byte) (img []byt
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("네트워크 오류: %w", err)
+		return nil, 0, fmt.Errorf("网络错误: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("응답 읽기 실패: %w", err)
+		return nil, resp.StatusCode, fmt.Errorf("响应读取失败: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -146,17 +149,17 @@ func (c *Fal) doRequest(ctx context.Context, url string, body []byte) (img []byt
 				detail = ": " + string(d)
 			}
 		}
-		return nil, resp.StatusCode, fmt.Errorf("fal.ai 오류 (HTTP %d)%s", resp.StatusCode, detail)
+		return nil, resp.StatusCode, fmt.Errorf("fal.ai 错误 (HTTP %d)%s", resp.StatusCode, detail)
 	}
 
 	var parsed falResponse
 	if err := json.Unmarshal(respBytes, &parsed); err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("응답 파싱 실패: %w", err)
+		return nil, resp.StatusCode, fmt.Errorf("响应解析失败: %w", err)
 	}
 	if len(parsed.Images) == 0 || parsed.Images[0].URL == "" {
-		return nil, 500, errors.New("응답에 이미지가 없습니다")
+		return nil, 500, errors.New("响应中没有图片")
 	}
-	data, err := decodeDataOrDownload(c.HTTP, parsed.Images[0].URL)
+	data, err := decodeDataOrDownloadContext(ctx, c.HTTP, parsed.Images[0].URL)
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -167,7 +170,7 @@ func (c *Fal) doRequest(ctx context.Context, url string, body []byte) (img []byt
 func (c *Fal) ValidateKey(_ context.Context) error {
 	key := strings.TrimSpace(c.APIKey)
 	if len(key) < 10 {
-		return errors.New("API 키가 너무 짧습니다")
+		return errors.New("API 密钥太短")
 	}
 	return nil
 }

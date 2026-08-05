@@ -46,9 +46,11 @@ echo "$PPGEN"   # 이후 모든 ppgen 호출에 이 경로를 사용
 | 프로바이더 | 환경변수 | 기본 모델 |
 |---|---|---|
 | gemini (기본) | `GEMINI_API_KEY` (또는 `GOOGLE_API_KEY`) | gemini-3-pro-image |
+| openai | `OPENAI_API_KEY` | gpt-image-2 |
 | openrouter | `OPENROUTER_API_KEY` | google/gemini-3-pro-image-preview |
 | fal | `FAL_KEY` (또는 `FAL_API_KEY`) | fal-ai/nano-banana-pro |
 | byteplus | `BYTEPLUS_API_KEY` (또는 `ARK_API_KEY`) | seedream-4-0-250828 |
+| zetatechs | `ZETATECHS_API_KEY` (또는 `ZETA_API_KEY`) | gpt-image-2 |
 
 키를 어디서도 찾지 못하면, 사용자에게 어떤 프로바이더로 어떤 키를 쓸지 묻거나
 `-provider`/`-key`를 직접 지정하게 한다. **키를 추측하거나 지어내지 않는다.**

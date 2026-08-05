@@ -23,23 +23,36 @@ func DetectPixelScale(img *image.NRGBA) int {
 	hist := make([]int, maxScale+1)
 
 	countRuns := func(get func(a, b int) (uint8, uint8, uint8, uint8), outer, inner int) {
+		record := func(runLen int) {
+			if runLen >= 2 && runLen <= maxScale {
+				hist[runLen]++
+			}
+		}
 		for o := 0; o < outer; o++ {
-			runLen := 1
-			pr, pg, pb, pa := get(o, 0)
-			for i := 1; i < inner; i++ {
+			runLen := 0
+			var pr, pg, pb uint8
+			for i := 0; i < inner; i++ {
 				r, g, b, al := get(o, i)
-				same := (al <= alphaThreshold && pa <= alphaThreshold) ||
-					(al > alphaThreshold && pa > alphaThreshold && nearRGB(r, g, b, pr, pg, pb))
+				if al <= alphaThreshold {
+					record(runLen)
+					runLen = 0
+					continue
+				}
+				if runLen == 0 {
+					runLen = 1
+					pr, pg, pb = r, g, b
+					continue
+				}
+				same := nearRGB(r, g, b, pr, pg, pb)
 				if same {
 					runLen++
 				} else {
-					if runLen >= 2 && runLen <= maxScale {
-						hist[runLen]++
-					}
+					record(runLen)
 					runLen = 1
 				}
-				pr, pg, pb, pa = r, g, b, al
+				pr, pg, pb = r, g, b
 			}
+			record(runLen)
 		}
 	}
 	countRuns(func(y, x int) (uint8, uint8, uint8, uint8) {
@@ -151,7 +164,7 @@ func PixelPostProcess(frames []*image.NRGBA, paletteSize int) {
 	scales := make([]int, 0, len(frames))
 	for _, f := range frames {
 		ApplyPalette(f, palette)
-		scales = append(scales, DetectPixelScale(f))
+		scales = append(scales, clampPixelScaleToContent(f, DetectPixelScale(f)))
 	}
 	// 프레임 간 그리드 일관성을 위해 중앙값 스케일 공유
 	sorted := append([]int(nil), scales...)
@@ -163,4 +176,26 @@ func PixelPostProcess(frames []*image.NRGBA, paletteSize int) {
 	for i, f := range frames {
 		frames[i] = Pixelize(f, scale)
 	}
+}
+
+func clampPixelScaleToContent(img *image.NRGBA, scale int) int {
+	if scale < 2 {
+		return scale
+	}
+	box := contentBBox(img)
+	if box.W == 0 || box.H == 0 {
+		return 1
+	}
+	minDim := min(box.W, box.H)
+	cap := minDim / 24
+	if cap < 2 {
+		return 1
+	}
+	if cap > 12 {
+		cap = 12
+	}
+	if scale > cap {
+		return cap
+	}
+	return scale
 }

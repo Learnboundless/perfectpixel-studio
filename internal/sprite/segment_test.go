@@ -72,3 +72,114 @@ func TestChromaMatteYCbCr(t *testing.T) {
 		t.Fatalf("마젠타 배경이 남음: alpha=%d", out.Pix[ei+3])
 	}
 }
+
+func TestChromaMatteKeepsNeutralSpriteOnDarkMagenta(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 96, 96))
+	fillBox(src, 0, 0, 95, 95, 145, 40, 88)     // dark generated magenta
+	fillBox(src, 34, 22, 62, 72, 225, 232, 238) // white armor
+	fillBox(src, 26, 28, 34, 78, 24, 30, 38)    // dark outline / weapon
+	fillBox(src, 40, 30, 56, 52, 25, 85, 170)   // blue torso
+	fillBox(src, 58, 28, 76, 70, 170, 34, 42)   // red shield
+	fillBox(src, 44, 52, 52, 64, 235, 175, 20)  // yellow vent
+
+	out := RemoveBackground(src)
+	for _, p := range []image.Point{
+		{42, 24}, // white
+		{30, 40}, // black
+		{48, 38}, // blue
+		{66, 44}, // red
+		{48, 58}, // yellow
+	} {
+		if a := out.Pix[out.PixOffset(p.X, p.Y)+3]; a <= alphaThreshold {
+			t.Fatalf("sprite color at %+v was eaten by dark-magenta key: alpha=%d", p, a)
+		}
+	}
+	if a := out.Pix[out.PixOffset(3, 3)+3]; a > alphaThreshold {
+		t.Fatalf("dark magenta background was not removed: alpha=%d", a)
+	}
+}
+
+func TestChromaMatteDespillsConnectedForegroundOnGradientMagenta(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 160, 160))
+	for y := 0; y < 160; y++ {
+		for x := 0; x < 160; x++ {
+			i := src.PixOffset(x, y)
+			// Video models rarely keep the requested key perfectly flat. This
+			// approximates the bright center and darker/compressed border seen in
+			// real generated clips.
+			v := uint8((x + y) % 22)
+			src.Pix[i], src.Pix[i+1], src.Pix[i+2], src.Pix[i+3] = 235+v/2, 8+v, 215+v, 255
+		}
+	}
+
+	// Neutral armor contaminated by magenta environment light. The dark,
+	// blue and red regions are legitimate sprite colors and must survive.
+	fillBox(src, 46, 26, 119, 136, 18, 24, 34)
+	fillBox(src, 50, 30, 115, 132, 214, 104, 205)
+	fillBox(src, 70, 56, 91, 92, 24, 82, 168)
+	fillBox(src, 95, 45, 119, 118, 178, 34, 40)
+
+	out := RemoveBackground(src)
+	if a := out.Pix[out.PixOffset(4, 4)+3]; a > alphaThreshold {
+		t.Fatalf("gradient magenta background was not removed: alpha=%d", a)
+	}
+
+	armor := out.PixOffset(60, 60)
+	if a := out.Pix[armor+3]; a <= alphaThreshold {
+		t.Fatalf("magenta-lit armor was removed: alpha=%d", a)
+	}
+	// Despill should make the neutral armor substantially less magenta while
+	// preserving its brightness. Before the fix R+B-G*2 is about 211.
+	magentaExcess := int(out.Pix[armor]) + int(out.Pix[armor+2]) - 2*int(out.Pix[armor+1])
+	if magentaExcess > 80 {
+		t.Fatalf("magenta spill remains on neutral armor: rgb=(%d,%d,%d), excess=%d",
+			out.Pix[armor], out.Pix[armor+1], out.Pix[armor+2], magentaExcess)
+	}
+	if out.Pix[armor+1] < 175 {
+		t.Fatalf("despill made bright neutral armor too dark: rgb=(%d,%d,%d)",
+			out.Pix[armor], out.Pix[armor+1], out.Pix[armor+2])
+	}
+
+	for _, p := range []image.Point{{80, 70}, {106, 70}, {48, 80}} {
+		if a := out.Pix[out.PixOffset(p.X, p.Y)+3]; a <= alphaThreshold {
+			t.Fatalf("legitimate sprite color at %+v was removed: alpha=%d", p, a)
+		}
+	}
+}
+
+func TestChromaOnlyClearsEdgeConnectedBackground(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 128, 128))
+	fillBox(src, 0, 0, 127, 127, 255, 0, 255)
+	// A closed dark outline surrounds a large region that happens to use the
+	// same color as the key. Full-frame color keying deletes it; an exterior
+	// flood must preserve it because it is not connected to the canvas edge.
+	fillBox(src, 3, 3, 124, 124, 18, 24, 34)
+	fillBox(src, 7, 7, 120, 120, 255, 0, 255)
+
+	out := RemoveBackground(src)
+	if a := out.Pix[out.PixOffset(1, 1)+3]; a > alphaThreshold {
+		t.Fatalf("edge-connected background was not cleared: alpha=%d", a)
+	}
+	if a := out.Pix[out.PixOffset(64, 64)+3]; a <= alphaThreshold {
+		t.Fatalf("enclosed subject color was deleted: alpha=%d", a)
+	}
+}
+
+func TestWhiteBackgroundPreservesEnclosedWhiteArmor(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 96, 96))
+	fillBox(src, 0, 0, 95, 95, 248, 248, 248)
+	fillBox(src, 20, 12, 75, 83, 18, 24, 34)
+	fillBox(src, 24, 16, 71, 79, 248, 248, 248)
+	fillBox(src, 38, 32, 57, 65, 35, 92, 180)
+
+	out := RemoveBackground(src)
+	if a := out.Pix[out.PixOffset(2, 2)+3]; a > alphaThreshold {
+		t.Fatalf("white exterior background was not cleared: alpha=%d", a)
+	}
+	if a := out.Pix[out.PixOffset(28, 24)+3]; a <= alphaThreshold {
+		t.Fatalf("enclosed white armor was deleted: alpha=%d", a)
+	}
+	if a := out.Pix[out.PixOffset(48, 48)+3]; a <= alphaThreshold {
+		t.Fatalf("colored subject detail was deleted: alpha=%d", a)
+	}
+}
