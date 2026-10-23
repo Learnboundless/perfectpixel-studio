@@ -5,7 +5,9 @@ go 1.25.0
 require (
 	github.com/kettek/apng v0.0.0-20250827064933-2bb5f5fcf253
 	github.com/wailsapp/wails/v2 v2.12.0
+	github.com/yalue/onnxruntime_go v1.32.1
 	golang.org/x/image v0.42.0
+	golang.org/x/sys v0.30.0
 )
 
 require (
@@ -35,6 +37,5 @@ require (
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	golang.org/x/crypto v0.33.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
-	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 )

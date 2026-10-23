@@ -1,5 +1,5 @@
 import { ImgHTMLAttributes, useEffect, useRef, useState } from "react";
-import { LoadImageFull, LoadImageThumb } from "../../wailsjs/go/main/App";
+import { LoadAnimationVersionResource, LoadImageFull, LoadImageThumb } from "../../wailsjs/go/main/App";
 
 const imageCache = new Map<string, string>();
 
@@ -12,7 +12,11 @@ export async function loadImageReference(reference: string, maxDim = 0): Promise
   const key = `${maxDim}:${value}`;
   const cached = imageCache.get(key);
   if (cached) return cached;
-  const loaded = maxDim > 0 ? await LoadImageThumb(value, maxDim) : await LoadImageFull(value);
+  const loaded = value.startsWith("version-resource:")
+    ? await LoadAnimationVersionResource(value, maxDim)
+    : maxDim > 0
+      ? await LoadImageThumb(value, maxDim)
+      : await LoadImageFull(value);
   imageCache.set(key, loaded);
   return loaded;
 }

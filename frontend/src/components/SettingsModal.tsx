@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Clapperboard, Eye, Image as ImageIcon, KeyRound, Loader2, MessageSquareText, SlidersHorizontal, Video } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clapperboard, Eye, HardDrive, Image as ImageIcon, KeyRound, Loader2, MessageSquareText, SlidersHorizontal, Video } from "lucide-react";
 import {
+  GetAnimationVersionStorageStats,
   SaveAnimationPipeline,
+  SaveAnimationVersionWarningGB,
+  SaveBackgroundRemovalMode,
   SaveProviderKey,
   SaveProviderModel,
   SaveProviderTextKey,
@@ -87,7 +90,20 @@ export interface ISettings {
   animationPipeline: string;
   videoSeconds: number;
   videoFps: number;
+  backgroundRemovalMode: string;
+  animationVersionWarningGb: number;
   providers: Record<string, IProviderInfo>;
+}
+
+interface AnimationVersionStorageStats {
+  versionCount: number;
+  trashCount: number;
+  versionBytes: number;
+  trashBytes: number;
+  totalBytes: number;
+  freeBytes: number;
+  warningBytes: number;
+  warning?: string;
 }
 
 interface IProps {
@@ -105,6 +121,14 @@ const PROVIDERS: { key: string; label: string; placeholder: string }[] = [
   { key: "zetatechs", label: "ZetaTechs", placeholder: "sk-..." },
   { key: "volcengine", label: "火山方舟", placeholder: "ark-..." },
 ];
+
+const formatStorageBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${Math.round(bytes)} B`;
+};
 
 // 멀티 프로바이더 설정 모달 (shadcn Dialog)
 export default function SettingsModal({ settings, onClose, onSaved }: IProps) {
@@ -129,6 +153,9 @@ export default function SettingsModal({ settings, onClose, onSaved }: IProps) {
   const [pipeline, setPipeline] = useState(settings.animationPipeline || "video_to_frames");
   const [videoSeconds, setVideoSeconds] = useState(settings.videoSeconds || 4);
   const [videoFps, setVideoFps] = useState(settings.videoFps || 12);
+  const [backgroundRemovalMode, setBackgroundRemovalMode] = useState(settings.backgroundRemovalMode || "hybrid");
+  const [versionWarningGB, setVersionWarningGB] = useState(settings.animationVersionWarningGb || 5);
+  const [storageStats, setStorageStats] = useState<AnimationVersionStorageStats | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -179,6 +206,22 @@ export default function SettingsModal({ settings, onClose, onSaved }: IProps) {
   useEffect(() => {
     setVisionModel(settings.providers?.[selectedVisionProvider]?.visionModel ?? "");
   }, [selectedVisionProvider, settings.providers]);
+
+  useEffect(() => {
+    setVersionWarningGB(settings.animationVersionWarningGb || 5);
+  }, [settings.animationVersionWarningGb]);
+
+  useEffect(() => {
+    let cancelled = false;
+    GetAnimationVersionStorageStats()
+      .then((stats) => {
+        if (!cancelled) setStorageStats(stats as unknown as AnimationVersionStorageStats);
+      })
+      .catch(() => {
+        if (!cancelled) setStorageStats(null);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const switchTab = (k: string) => {
     setTab(k);
@@ -306,6 +349,39 @@ export default function SettingsModal({ settings, onClose, onSaved }: IProps) {
     try {
       await SaveAnimationPipeline(next);
       onSaved(t("toast_animation_settings_saved"), true);
+    } catch (e) {
+      setError(localizeBackendText(e, lang));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveBackgroundRemoval = async (next: string) => {
+    if (busy) return;
+    setBackgroundRemovalMode(next);
+    setBusy(true);
+    setError("");
+    try {
+      await SaveBackgroundRemovalMode(next);
+      await onSaved("抠图模式已保存。", true);
+    } catch (e) {
+      setError(localizeBackendText(e, lang));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveVersionWarning = async () => {
+    if (busy) return;
+    const next = Math.max(1, Math.min(1024, Math.round(versionWarningGB || 5)));
+    setVersionWarningGB(next);
+    setBusy(true);
+    setError("");
+    try {
+      await SaveAnimationVersionWarningGB(next);
+      const stats = await GetAnimationVersionStorageStats();
+      setStorageStats(stats as unknown as AnimationVersionStorageStats);
+      await onSaved("版本库容量提醒已保存。", true);
     } catch (e) {
       setError(localizeBackendText(e, lang));
     } finally {
@@ -476,8 +552,48 @@ export default function SettingsModal({ settings, onClose, onSaved }: IProps) {
                       </SelectContent>
                     </Select>
                   </div>
+                  <div className="field">
+                    <Label>默认抠图</Label>
+                    <Select value={backgroundRemovalMode} onValueChange={saveBackgroundRemoval}>
+                      <SelectTrigger disabled={busy}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="chroma">色键</SelectItem>
+                        <SelectItem value="neural">神经网络（U²-NetP）</SelectItem>
+                        <SelectItem value="hybrid">混合（推荐）</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
                 <p className="hint">{t("pipeline_hint")}</p>
+              </section>
+
+              <section className="settings-section storage-settings-section">
+                <div className="settings-section-head">
+                  <div>
+                    <h3><HardDrive size={15} /> 动作版本存储</h3>
+                    <p>版本不会自动清理；永久删除只能在动作版本的回收站中执行。</p>
+                  </div>
+                </div>
+                <div className="storage-stats-grid">
+                  <div><span>版本库</span><strong>{formatStorageBytes(storageStats?.versionBytes ?? 0)}</strong><small>{storageStats?.versionCount ?? 0} 个版本</small></div>
+                  <div><span>回收站</span><strong>{formatStorageBytes(storageStats?.trashBytes ?? 0)}</strong><small>{storageStats?.trashCount ?? 0} 个版本</small></div>
+                  <div><span>磁盘剩余</span><strong>{storageStats?.freeBytes ? formatStorageBytes(storageStats.freeBytes) : "未知"}</strong><small>低于 10GB 时提醒</small></div>
+                </div>
+                {storageStats?.warning && <div className="settings-storage-warning"><AlertTriangle size={14} />{storageStats.warning}</div>}
+                <div className="settings-storage-threshold">
+                  <div className="field">
+                    <Label>容量提醒阈值（GB）</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={1024}
+                      value={versionWarningGB}
+                      onChange={(event) => setVersionWarningGB(Number(event.target.value))}
+                      onKeyDown={(event) => event.key === "Enter" && saveVersionWarning()}
+                    />
+                  </div>
+                  <Button variant="outline" disabled={busy} onClick={saveVersionWarning}>{t("apply")}</Button>
+                </div>
               </section>
 
               <section className="settings-section settings-models-section">

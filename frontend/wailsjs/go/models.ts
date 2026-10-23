@@ -82,6 +82,242 @@ export namespace gen {
 }
 
 export namespace main {
+  export class AnimationFrameReplacement {
+    candidateId: string;
+    source: string;
+    label?: string;
+    targetFrameIndex: number;
+    timeMs?: number;
+    quality?: number;
+    reason?: string;
+    replacedAt: string;
+
+    static createFrom(source: any = {}) {
+      return new AnimationFrameReplacement(source);
+    }
+
+    constructor(source: any = {}) {
+      if ("string" === typeof source) source = JSON.parse(source);
+      this.candidateId = source["candidateId"];
+      this.source = source["source"];
+      this.label = source["label"];
+      this.targetFrameIndex = source["targetFrameIndex"];
+      this.timeMs = source["timeMs"];
+      this.quality = source["quality"];
+      this.reason = source["reason"];
+      this.replacedAt = source["replacedAt"];
+    }
+  }
+  export class FrameSelectionTrace {
+    targetFrameIndex: number;
+    candidateId: string;
+    source: string;
+    timeMs?: number;
+    quality?: number;
+    reason?: string;
+    selectedAt?: string;
+
+    static createFrom(source: any = {}) {
+      return new FrameSelectionTrace(source);
+    }
+
+    constructor(source: any = {}) {
+      if ("string" === typeof source) source = JSON.parse(source);
+      this.targetFrameIndex = source["targetFrameIndex"];
+      this.candidateId = source["candidateId"];
+      this.source = source["source"];
+      this.timeMs = source["timeMs"];
+      this.quality = source["quality"];
+      this.reason = source["reason"];
+      this.selectedAt = source["selectedAt"];
+    }
+  }
+  export class GenerationAttempt {
+    index: number;
+    pipeline: string;
+    provider?: string;
+    model?: string;
+    prompt: string;
+    references?: GenerationReference[];
+    parameters?: Record<string, string>;
+
+    static createFrom(source: any = {}) {
+      return new GenerationAttempt(source);
+    }
+
+    constructor(source: any = {}) {
+      if ("string" === typeof source) source = JSON.parse(source);
+      this.index = source["index"];
+      this.pipeline = source["pipeline"];
+      this.provider = source["provider"];
+      this.model = source["model"];
+      this.prompt = source["prompt"];
+      this.references = this.convertValues(
+        source["references"],
+        GenerationReference,
+      );
+      this.parameters = source["parameters"];
+    }
+
+    convertValues(a: any, classs: any, asMap: boolean = false): any {
+      if (!a) {
+        return a;
+      }
+      if (a.slice && a.map) {
+        return (a as any[]).map((elem) => this.convertValues(elem, classs));
+      } else if ("object" === typeof a) {
+        if (asMap) {
+          for (const key of Object.keys(a)) {
+            a[key] = new classs(a[key]);
+          }
+          return a;
+        }
+        return new classs(a);
+      }
+      return a;
+    }
+  }
+  export class GenerationReference {
+    kind: string;
+    label: string;
+    source: string;
+    id?: string;
+    path?: string;
+    index?: number;
+    preview?: string;
+
+    static createFrom(source: any = {}) {
+      return new GenerationReference(source);
+    }
+
+    constructor(source: any = {}) {
+      if ("string" === typeof source) source = JSON.parse(source);
+      this.kind = source["kind"];
+      this.label = source["label"];
+      this.source = source["source"];
+      this.id = source["id"];
+      this.path = source["path"];
+      this.index = source["index"];
+      this.preview = source["preview"];
+    }
+  }
+  export class GenerationMediaSlotTrace {
+    slot: string;
+    field: string;
+    role?: string;
+    count: number;
+
+    static createFrom(source: any = {}) {
+      return new GenerationMediaSlotTrace(source);
+    }
+
+    constructor(source: any = {}) {
+      if ("string" === typeof source) source = JSON.parse(source);
+      this.slot = source["slot"];
+      this.field = source["field"];
+      this.role = source["role"];
+      this.count = source["count"];
+    }
+  }
+  export class GenerationTrace {
+    pipeline: string;
+    provider?: string;
+    imageProvider?: string;
+    videoProvider?: string;
+    model?: string;
+    videoModel?: string;
+    motionSourceMode: string;
+    motionSourceId?: string;
+    motionSourceName?: string;
+    videoReferenceMode?: string;
+    videoSubjectMode?: string;
+    actualVideoReferenceMode?: string;
+    videoReferenceField?: string;
+    videoWorkflow?: string;
+    videoRequestRoute?: string;
+    videoMediaSlots?: GenerationMediaSlotTrace[];
+    frameSamplerMode?: string;
+    alignmentMode?: string;
+    backgroundRemovalMode?: string;
+    backgroundRemovalModel?: string;
+    backgroundRemovalSha256?: string;
+    backgroundRemovalMs?: number;
+    backgroundRemovalFallback?: string;
+    prompt?: string;
+    calledAi: boolean;
+    parameters?: Record<string, string>;
+    references?: GenerationReference[];
+    attempts?: GenerationAttempt[];
+    selections?: FrameSelectionTrace[];
+    startedAt?: string;
+    completedAt?: string;
+
+    static createFrom(source: any = {}) {
+      return new GenerationTrace(source);
+    }
+
+    constructor(source: any = {}) {
+      if ("string" === typeof source) source = JSON.parse(source);
+      this.pipeline = source["pipeline"];
+      this.provider = source["provider"];
+      this.imageProvider = source["imageProvider"];
+      this.videoProvider = source["videoProvider"];
+      this.model = source["model"];
+      this.videoModel = source["videoModel"];
+      this.motionSourceMode = source["motionSourceMode"];
+      this.motionSourceId = source["motionSourceId"];
+      this.motionSourceName = source["motionSourceName"];
+      this.videoReferenceMode = source["videoReferenceMode"];
+      this.videoSubjectMode = source["videoSubjectMode"];
+      this.actualVideoReferenceMode = source["actualVideoReferenceMode"];
+      this.videoReferenceField = source["videoReferenceField"];
+      this.videoWorkflow = source["videoWorkflow"];
+      this.videoRequestRoute = source["videoRequestRoute"];
+      this.videoMediaSlots = this.convertValues(
+        source["videoMediaSlots"],
+        GenerationMediaSlotTrace,
+      );
+      this.frameSamplerMode = source["frameSamplerMode"];
+      this.alignmentMode = source["alignmentMode"];
+      this.backgroundRemovalMode = source["backgroundRemovalMode"];
+      this.backgroundRemovalModel = source["backgroundRemovalModel"];
+      this.backgroundRemovalSha256 = source["backgroundRemovalSha256"];
+      this.backgroundRemovalMs = source["backgroundRemovalMs"];
+      this.backgroundRemovalFallback = source["backgroundRemovalFallback"];
+      this.prompt = source["prompt"];
+      this.calledAi = source["calledAi"];
+      this.parameters = source["parameters"];
+      this.references = this.convertValues(
+        source["references"],
+        GenerationReference,
+      );
+      this.attempts = this.convertValues(source["attempts"], GenerationAttempt);
+      this.selections = this.convertValues(
+        source["selections"],
+        FrameSelectionTrace,
+      );
+      this.startedAt = source["startedAt"];
+      this.completedAt = source["completedAt"];
+    }
+
+    convertValues(a: any, classs: any, asMap: boolean = false): any {
+      if (!a) {
+        return a;
+      }
+      if (a.slice && a.map) {
+        return (a as any[]).map((elem) => this.convertValues(elem, classs));
+      } else if ("object" === typeof a) {
+        if (asMap) {
+          for (const key of Object.keys(a)) {
+            a[key] = new classs(a[key]);
+          }
+          return a;
+        }
+        return new classs(a);
+      }
+      return a;
+    }
+  }
   export class CandidateFrame {
     id: string;
     index: number;
@@ -122,6 +358,226 @@ export namespace main {
       this.selected = source["selected"];
     }
   }
+  export class AnimationVersionFrame {
+    id: string;
+    png?: string;
+    path?: string;
+    selected: boolean;
+    source?: string;
+    sourceRef?: string;
+    replacement?: AnimationFrameReplacement;
+
+    static createFrom(source: any = {}) {
+      return new AnimationVersionFrame(source);
+    }
+
+    constructor(source: any = {}) {
+      if ("string" === typeof source) source = JSON.parse(source);
+      this.id = source["id"];
+      this.png = source["png"];
+      this.path = source["path"];
+      this.selected = source["selected"];
+      this.source = source["source"];
+      this.sourceRef = source["sourceRef"];
+      this.replacement = this.convertValues(
+        source["replacement"],
+        AnimationFrameReplacement,
+      );
+    }
+
+    convertValues(a: any, classs: any, asMap: boolean = false): any {
+      if (!a) {
+        return a;
+      }
+      if (a.slice && a.map) {
+        return (a as any[]).map((elem) => this.convertValues(elem, classs));
+      } else if ("object" === typeof a) {
+        if (asMap) {
+          for (const key of Object.keys(a)) {
+            a[key] = new classs(a[key]);
+          }
+          return a;
+        }
+        return new classs(a);
+      }
+      return a;
+    }
+  }
+  export class AnimationVersion {
+    id: string;
+    characterId: string;
+    stateId: string;
+    stateName: string;
+    versionNumber: number;
+    status: string;
+    source: string;
+    parentVersionId?: string;
+    frameCount: number;
+    overallScore?: number;
+    backgroundRemovalMode?: string;
+    thumbnail?: string;
+    createdAt: string;
+    deletedAt?: string;
+    sizeBytes: number;
+    partialRecovery?: boolean;
+    current: boolean;
+    baselineFrames: AnimationVersionFrame[];
+    workingComposition: AnimationVersionFrame[];
+    rawStrip?: string;
+    rawStripPath?: string;
+    rawVideoPath?: string;
+    rawExtractedFrames?: string[];
+    candidateFrames?: CandidateFrame[];
+    warnings?: string[];
+    feedback?: string;
+    trace: GenerationTrace;
+    scores?: Record<string, number>;
+    sequenceMetrics?: Record<string, number>;
+    generationParameters?: Record<string, any>;
+    characterSnapshot?: Record<string, any>;
+    stateSnapshot?: Record<string, any>;
+    sourceKey?: string;
+
+    static createFrom(source: any = {}) {
+      return new AnimationVersion(source);
+    }
+
+    constructor(source: any = {}) {
+      if ("string" === typeof source) source = JSON.parse(source);
+      this.id = source["id"];
+      this.characterId = source["characterId"];
+      this.stateId = source["stateId"];
+      this.stateName = source["stateName"];
+      this.versionNumber = source["versionNumber"];
+      this.status = source["status"];
+      this.source = source["source"];
+      this.parentVersionId = source["parentVersionId"];
+      this.frameCount = source["frameCount"];
+      this.overallScore = source["overallScore"];
+      this.backgroundRemovalMode = source["backgroundRemovalMode"];
+      this.thumbnail = source["thumbnail"];
+      this.createdAt = source["createdAt"];
+      this.deletedAt = source["deletedAt"];
+      this.sizeBytes = source["sizeBytes"];
+      this.partialRecovery = source["partialRecovery"];
+      this.current = source["current"];
+      this.baselineFrames = this.convertValues(
+        source["baselineFrames"],
+        AnimationVersionFrame,
+      );
+      this.workingComposition = this.convertValues(
+        source["workingComposition"],
+        AnimationVersionFrame,
+      );
+      this.rawStrip = source["rawStrip"];
+      this.rawStripPath = source["rawStripPath"];
+      this.rawVideoPath = source["rawVideoPath"];
+      this.rawExtractedFrames = source["rawExtractedFrames"];
+      this.candidateFrames = this.convertValues(
+        source["candidateFrames"],
+        CandidateFrame,
+      );
+      this.warnings = source["warnings"];
+      this.feedback = source["feedback"];
+      this.trace = this.convertValues(source["trace"], GenerationTrace);
+      this.scores = source["scores"];
+      this.sequenceMetrics = source["sequenceMetrics"];
+      this.generationParameters = source["generationParameters"];
+      this.characterSnapshot = source["characterSnapshot"];
+      this.stateSnapshot = source["stateSnapshot"];
+      this.sourceKey = source["sourceKey"];
+    }
+
+    convertValues(a: any, classs: any, asMap: boolean = false): any {
+      if (!a) {
+        return a;
+      }
+      if (a.slice && a.map) {
+        return (a as any[]).map((elem) => this.convertValues(elem, classs));
+      } else if ("object" === typeof a) {
+        if (asMap) {
+          for (const key of Object.keys(a)) {
+            a[key] = new classs(a[key]);
+          }
+          return a;
+        }
+        return new classs(a);
+      }
+      return a;
+    }
+  }
+
+  export class AnimationVersionStorageStats {
+    versionCount: number;
+    trashCount: number;
+    versionBytes: number;
+    trashBytes: number;
+    totalBytes: number;
+    freeBytes: number;
+    warningBytes: number;
+    warning?: string;
+
+    static createFrom(source: any = {}) {
+      return new AnimationVersionStorageStats(source);
+    }
+
+    constructor(source: any = {}) {
+      if ("string" === typeof source) source = JSON.parse(source);
+      this.versionCount = source["versionCount"];
+      this.trashCount = source["trashCount"];
+      this.versionBytes = source["versionBytes"];
+      this.trashBytes = source["trashBytes"];
+      this.totalBytes = source["totalBytes"];
+      this.freeBytes = source["freeBytes"];
+      this.warningBytes = source["warningBytes"];
+      this.warning = source["warning"];
+    }
+  }
+  export class AnimationVersionSummary {
+    id: string;
+    characterId: string;
+    stateId: string;
+    stateName: string;
+    versionNumber: number;
+    status: string;
+    source: string;
+    parentVersionId?: string;
+    frameCount: number;
+    overallScore?: number;
+    backgroundRemovalMode?: string;
+    thumbnail?: string;
+    createdAt: string;
+    deletedAt?: string;
+    sizeBytes: number;
+    partialRecovery?: boolean;
+    current: boolean;
+
+    static createFrom(source: any = {}) {
+      return new AnimationVersionSummary(source);
+    }
+
+    constructor(source: any = {}) {
+      if ("string" === typeof source) source = JSON.parse(source);
+      this.id = source["id"];
+      this.characterId = source["characterId"];
+      this.stateId = source["stateId"];
+      this.stateName = source["stateName"];
+      this.versionNumber = source["versionNumber"];
+      this.status = source["status"];
+      this.source = source["source"];
+      this.parentVersionId = source["parentVersionId"];
+      this.frameCount = source["frameCount"];
+      this.overallScore = source["overallScore"];
+      this.backgroundRemovalMode = source["backgroundRemovalMode"];
+      this.thumbnail = source["thumbnail"];
+      this.createdAt = source["createdAt"];
+      this.deletedAt = source["deletedAt"];
+      this.sizeBytes = source["sizeBytes"];
+      this.partialRecovery = source["partialRecovery"];
+      this.current = source["current"];
+    }
+  }
+
   export class CharacterLibraryItem {
     id: string;
     name: string;
@@ -148,6 +604,83 @@ export namespace main {
       this.image = source["image"];
       this.createdAt = source["createdAt"];
       this.updatedAt = source["updatedAt"];
+    }
+  }
+  export class CommitAnimationVersionArgs {
+    characterId: string;
+    stateId: string;
+    stateName: string;
+    status: string;
+    source: string;
+    sourceKey?: string;
+    parentVersionId?: string;
+    backgroundRemovalMode?: string;
+    frames: AnimationVersionFrame[];
+    rawStrip?: string;
+    rawVideoPath?: string;
+    rawExtractedFrames?: string[];
+    candidateFrames?: CandidateFrame[];
+    warnings?: string[];
+    feedback?: string;
+    trace: GenerationTrace;
+    scores?: Record<string, number>;
+    sequenceMetrics?: Record<string, number>;
+    generationParameters?: Record<string, any>;
+    characterSnapshot?: Record<string, any>;
+    stateSnapshot?: Record<string, any>;
+    partialRecovery?: boolean;
+    createdAt?: string;
+
+    static createFrom(source: any = {}) {
+      return new CommitAnimationVersionArgs(source);
+    }
+
+    constructor(source: any = {}) {
+      if ("string" === typeof source) source = JSON.parse(source);
+      this.characterId = source["characterId"];
+      this.stateId = source["stateId"];
+      this.stateName = source["stateName"];
+      this.status = source["status"];
+      this.source = source["source"];
+      this.sourceKey = source["sourceKey"];
+      this.parentVersionId = source["parentVersionId"];
+      this.backgroundRemovalMode = source["backgroundRemovalMode"];
+      this.frames = this.convertValues(source["frames"], AnimationVersionFrame);
+      this.rawStrip = source["rawStrip"];
+      this.rawVideoPath = source["rawVideoPath"];
+      this.rawExtractedFrames = source["rawExtractedFrames"];
+      this.candidateFrames = this.convertValues(
+        source["candidateFrames"],
+        CandidateFrame,
+      );
+      this.warnings = source["warnings"];
+      this.feedback = source["feedback"];
+      this.trace = this.convertValues(source["trace"], GenerationTrace);
+      this.scores = source["scores"];
+      this.sequenceMetrics = source["sequenceMetrics"];
+      this.generationParameters = source["generationParameters"];
+      this.characterSnapshot = source["characterSnapshot"];
+      this.stateSnapshot = source["stateSnapshot"];
+      this.partialRecovery = source["partialRecovery"];
+      this.createdAt = source["createdAt"];
+    }
+
+    convertValues(a: any, classs: any, asMap: boolean = false): any {
+      if (!a) {
+        return a;
+      }
+      if (a.slice && a.map) {
+        return (a as any[]).map((elem) => this.convertValues(elem, classs));
+      } else if ("object" === typeof a) {
+        if (asMap) {
+          for (const key of Object.keys(a)) {
+            a[key] = new classs(a[key]);
+          }
+          return a;
+        }
+        return new classs(a);
+      }
+      return a;
     }
   }
   export class ExportAnimationArgs {
@@ -229,30 +762,6 @@ export namespace main {
     }
   }
 
-  export class FrameSelectionTrace {
-    targetFrameIndex: number;
-    candidateId: string;
-    source: string;
-    timeMs?: number;
-    quality?: number;
-    reason?: string;
-    selectedAt?: string;
-
-    static createFrom(source: any = {}) {
-      return new FrameSelectionTrace(source);
-    }
-
-    constructor(source: any = {}) {
-      if ("string" === typeof source) source = JSON.parse(source);
-      this.targetFrameIndex = source["targetFrameIndex"];
-      this.candidateId = source["candidateId"];
-      this.source = source["source"];
-      this.timeMs = source["timeMs"];
-      this.quality = source["quality"];
-      this.reason = source["reason"];
-      this.selectedAt = source["selectedAt"];
-    }
-  }
   export class GalleryImage {
     name: string;
     path: string;
@@ -311,6 +820,7 @@ export namespace main {
     frameSamplerMode: string;
     alignmentMode: string;
     frameFitMode: string;
+    backgroundRemovalMode: string;
     targetFrameIndex: number;
     state: sprite.StateSpec;
 
@@ -343,6 +853,7 @@ export namespace main {
       this.frameSamplerMode = source["frameSamplerMode"];
       this.alignmentMode = source["alignmentMode"];
       this.frameFitMode = source["frameFitMode"];
+      this.backgroundRemovalMode = source["backgroundRemovalMode"];
       this.targetFrameIndex = source["targetFrameIndex"];
       this.state = this.convertValues(source["state"], sprite.StateSpec);
     }
@@ -365,75 +876,7 @@ export namespace main {
       return a;
     }
   }
-  export class GenerationReference {
-    kind: string;
-    label: string;
-    source: string;
-    id?: string;
-    path?: string;
-    index?: number;
-    preview?: string;
 
-    static createFrom(source: any = {}) {
-      return new GenerationReference(source);
-    }
-
-    constructor(source: any = {}) {
-      if ("string" === typeof source) source = JSON.parse(source);
-      this.kind = source["kind"];
-      this.label = source["label"];
-      this.source = source["source"];
-      this.id = source["id"];
-      this.path = source["path"];
-      this.index = source["index"];
-      this.preview = source["preview"];
-    }
-  }
-  export class GenerationAttempt {
-    index: number;
-    pipeline: string;
-    provider?: string;
-    model?: string;
-    prompt: string;
-    references?: GenerationReference[];
-    parameters?: Record<string, string>;
-
-    static createFrom(source: any = {}) {
-      return new GenerationAttempt(source);
-    }
-
-    constructor(source: any = {}) {
-      if ("string" === typeof source) source = JSON.parse(source);
-      this.index = source["index"];
-      this.pipeline = source["pipeline"];
-      this.provider = source["provider"];
-      this.model = source["model"];
-      this.prompt = source["prompt"];
-      this.references = this.convertValues(
-        source["references"],
-        GenerationReference,
-      );
-      this.parameters = source["parameters"];
-    }
-
-    convertValues(a: any, classs: any, asMap: boolean = false): any {
-      if (!a) {
-        return a;
-      }
-      if (a.slice && a.map) {
-        return (a as any[]).map((elem) => this.convertValues(elem, classs));
-      } else if ("object" === typeof a) {
-        if (asMap) {
-          for (const key of Object.keys(a)) {
-            a[key] = new classs(a[key]);
-          }
-          return a;
-        }
-        return new classs(a);
-      }
-      return a;
-    }
-  }
   export class GenerationJob {
     id: string;
     kind: string;
@@ -486,114 +929,7 @@ export namespace main {
       this.providerResponseSummary = source["providerResponseSummary"];
     }
   }
-  export class GenerationMediaSlotTrace {
-    slot: string;
-    field: string;
-    role?: string;
-    count: number;
 
-    static createFrom(source: any = {}) {
-      return new GenerationMediaSlotTrace(source);
-    }
-
-    constructor(source: any = {}) {
-      if ("string" === typeof source) source = JSON.parse(source);
-      this.slot = source["slot"];
-      this.field = source["field"];
-      this.role = source["role"];
-      this.count = source["count"];
-    }
-  }
-
-  export class GenerationTrace {
-    pipeline: string;
-    provider?: string;
-    imageProvider?: string;
-    videoProvider?: string;
-    model?: string;
-    videoModel?: string;
-    motionSourceMode: string;
-    motionSourceId?: string;
-    motionSourceName?: string;
-    videoReferenceMode?: string;
-    videoSubjectMode?: string;
-    actualVideoReferenceMode?: string;
-    videoReferenceField?: string;
-    videoWorkflow?: string;
-    videoRequestRoute?: string;
-    videoMediaSlots?: GenerationMediaSlotTrace[];
-    frameSamplerMode?: string;
-    alignmentMode?: string;
-    prompt?: string;
-    calledAi: boolean;
-    parameters?: Record<string, string>;
-    references?: GenerationReference[];
-    attempts?: GenerationAttempt[];
-    selections?: FrameSelectionTrace[];
-    startedAt?: string;
-    completedAt?: string;
-
-    static createFrom(source: any = {}) {
-      return new GenerationTrace(source);
-    }
-
-    constructor(source: any = {}) {
-      if ("string" === typeof source) source = JSON.parse(source);
-      this.pipeline = source["pipeline"];
-      this.provider = source["provider"];
-      this.imageProvider = source["imageProvider"];
-      this.videoProvider = source["videoProvider"];
-      this.model = source["model"];
-      this.videoModel = source["videoModel"];
-      this.motionSourceMode = source["motionSourceMode"];
-      this.motionSourceId = source["motionSourceId"];
-      this.motionSourceName = source["motionSourceName"];
-      this.videoReferenceMode = source["videoReferenceMode"];
-      this.videoSubjectMode = source["videoSubjectMode"];
-      this.actualVideoReferenceMode = source["actualVideoReferenceMode"];
-      this.videoReferenceField = source["videoReferenceField"];
-      this.videoWorkflow = source["videoWorkflow"];
-      this.videoRequestRoute = source["videoRequestRoute"];
-      this.videoMediaSlots = this.convertValues(
-        source["videoMediaSlots"],
-        GenerationMediaSlotTrace,
-      );
-      this.frameSamplerMode = source["frameSamplerMode"];
-      this.alignmentMode = source["alignmentMode"];
-      this.prompt = source["prompt"];
-      this.calledAi = source["calledAi"];
-      this.parameters = source["parameters"];
-      this.references = this.convertValues(
-        source["references"],
-        GenerationReference,
-      );
-      this.attempts = this.convertValues(source["attempts"], GenerationAttempt);
-      this.selections = this.convertValues(
-        source["selections"],
-        FrameSelectionTrace,
-      );
-      this.startedAt = source["startedAt"];
-      this.completedAt = source["completedAt"];
-    }
-
-    convertValues(a: any, classs: any, asMap: boolean = false): any {
-      if (!a) {
-        return a;
-      }
-      if (a.slice && a.map) {
-        return (a as any[]).map((elem) => this.convertValues(elem, classs));
-      } else if ("object" === typeof a) {
-        if (asMap) {
-          for (const key of Object.keys(a)) {
-            a[key] = new classs(a[key]);
-          }
-          return a;
-        }
-        return new classs(a);
-      }
-      return a;
-    }
-  }
   export class ImportMotionLibraryArgs {
     name: string;
     action: string;
@@ -622,6 +958,40 @@ export namespace main {
       this.seconds = source["seconds"];
       this.tags = source["tags"];
       this.sourcePath = source["sourcePath"];
+    }
+  }
+  export class LegacyAnimationRecoveryItem {
+    id: string;
+    artifactDir: string;
+    stateHint?: string;
+    frameCount: number;
+    thumbnail?: string;
+    reason: string;
+    baseReferenceHash?: string;
+    contentHash: string;
+    sizeBytes: number;
+    discoveredAt: string;
+    ignoredAt?: string;
+    claimedVersionId?: string;
+
+    static createFrom(source: any = {}) {
+      return new LegacyAnimationRecoveryItem(source);
+    }
+
+    constructor(source: any = {}) {
+      if ("string" === typeof source) source = JSON.parse(source);
+      this.id = source["id"];
+      this.artifactDir = source["artifactDir"];
+      this.stateHint = source["stateHint"];
+      this.frameCount = source["frameCount"];
+      this.thumbnail = source["thumbnail"];
+      this.reason = source["reason"];
+      this.baseReferenceHash = source["baseReferenceHash"];
+      this.contentHash = source["contentHash"];
+      this.sizeBytes = source["sizeBytes"];
+      this.discoveredAt = source["discoveredAt"];
+      this.ignoredAt = source["ignoredAt"];
+      this.claimedVersionId = source["claimedVersionId"];
     }
   }
   export class MotionLibraryItem {
@@ -821,6 +1191,7 @@ export namespace main {
     frameSamplerMode: string;
     alignmentMode: string;
     frameFitMode: string;
+    backgroundRemovalMode: string;
     state: sprite.StateSpec;
 
     static createFrom(source: any = {}) {
@@ -841,6 +1212,7 @@ export namespace main {
       this.frameSamplerMode = source["frameSamplerMode"];
       this.alignmentMode = source["alignmentMode"];
       this.frameFitMode = source["frameFitMode"];
+      this.backgroundRemovalMode = source["backgroundRemovalMode"];
       this.state = this.convertValues(source["state"], sprite.StateSpec);
     }
 
@@ -978,6 +1350,8 @@ export namespace main {
     animationPipeline: string;
     videoSeconds: number;
     videoFps: number;
+    backgroundRemovalMode: string;
+    animationVersionWarningGb: number;
     providers: Record<string, ProviderInfo>;
 
     static createFrom(source: any = {}) {
@@ -994,6 +1368,8 @@ export namespace main {
       this.animationPipeline = source["animationPipeline"];
       this.videoSeconds = source["videoSeconds"];
       this.videoFps = source["videoFps"];
+      this.backgroundRemovalMode = source["backgroundRemovalMode"];
+      this.animationVersionWarningGb = source["animationVersionWarningGb"];
       this.providers = this.convertValues(
         source["providers"],
         ProviderInfo,

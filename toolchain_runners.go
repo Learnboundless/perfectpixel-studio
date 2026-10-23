@@ -169,7 +169,8 @@ func (a *App) runImageJob(ctx context.Context, job GenerationJob, control *Gener
 		postBase := rawImage
 		postParent := rawAsset.ID
 		if req.PostProcess.RemoveBackground {
-			clean := sprite.RemoveBackground(postBase)
+			remover, _ := appBackgroundRemover(req.PostProcess.BackgroundRemovalMode)
+			clean, _ := remover.Remove(postBase)
 			cleanAsset, _, err := a.storeGeneratedNRGBA(clean, ToolAsset{
 				Name:          fmt.Sprintf("%s-%02d-no-bg.png", job.ID, variant+1),
 				Usage:         "background_removed",

@@ -236,6 +236,7 @@ export default function StatesPanel({
                   </span>
                 )}
                 <span className="spacer" />
+                {(s.versionCount ?? 0) > 0 && <span className="state-sub">当前 v{s.currentVersionNumber ?? "-"} · 共 {s.versionCount} 版</span>}
                 {s.status === "done" && <span className="state-sub">{t("n_frames", { n: sel })}</span>}
                 <Button
                   variant="destructive-ghost"

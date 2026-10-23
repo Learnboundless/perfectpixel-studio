@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { Images, LibraryBig, ListTodo, Package, Plus, Settings, X } from "lucide-react";
-import { AcknowledgeGeneration, CancelGeneration, ClearSession, DeleteCharacterLibraryItem, ExportAnimation, ExportProject, GenerateState, GetSettings, ImportMotionLibraryFile, ImportMotionLibraryFolder, ListCharacterLibrary, ListDirections, ListMotionLibrary, ListPendingGenerations, ListPresets, LoadSession, MirrorFrames, ReprocessVideoState, RevealInFinder, SaveCharacterLibraryItem, SaveMotionLibraryItem, SaveSession } from "../wailsjs/go/main/App";
+import { AcknowledgeGeneration, CancelGeneration, ClearSession, CommitAnimationVersion, DeleteCharacterLibraryItem, ExportAnimation, ExportProject, GenerateState, GetAnimationVersion, GetSettings, ImportMotionLibraryFile, ImportMotionLibraryFolder, ListAnimationVersions, ListCharacterLibrary, ListDirections, ListMotionLibrary, ListPendingGenerations, ListPresets, LoadSession, MirrorFrames, ReprocessVideoState, RevealInFinder, SaveCharacterLibraryItem, SaveMotionLibraryItem, SaveSession, SetCurrentAnimationVersion, UpdateAnimationVersionComposition } from "../wailsjs/go/main/App";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import CharacterPanel from "./components/CharacterPanel";
 import CharacterSidebar from "./components/CharacterSidebar";
 import GalleryModal from "./components/GalleryModal";
 import PreviewPanel from "./components/PreviewPanel";
+import VersionManager from "./components/VersionManager";
 import SettingsModal, { ISettings } from "./components/SettingsModal";
 import StatesPanel from "./components/StatesPanel";
 import ModuleNav from "./components/toolchain/ModuleNav";
 import ToolchainHub from "./components/toolchain/ToolchainHub";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./components/ui/dialog";
-import { AlignmentMode, AnimationPipeline, AppModule, CharacterDef, CharacterLibraryItem, CharacterWorkspace, DirectionInfo, FALLBACK_PRESETS, FrameFitMode, FrameItem, FrameSamplerMode, MotionLibraryItem, MotionSourceMode, PresetInfo, StateDef, TaskProgress, VideoPromptLanguage, VideoReferenceMode, VideoShadowMode, VideoSubjectMode, selectedFrames, uid } from "./types";
+import { AlignmentMode, AnimationPipeline, AppModule, BackgroundRemovalMode, CharacterDef, CharacterLibraryItem, CharacterWorkspace, DirectionInfo, FALLBACK_PRESETS, FrameFitMode, FrameItem, FrameSamplerMode, MotionLibraryItem, MotionSourceMode, PresetInfo, StateDef, TaskProgress, VideoPromptLanguage, VideoReferenceMode, VideoShadowMode, VideoSubjectMode, selectedFrames, uid } from "./types";
 import { Lang, useI18n } from "./i18n";
 import { isBackendCancel, localizeBackendList, localizeBackendText } from "./i18n/backend";
 import { directionName } from "./i18n/catalog";
@@ -40,6 +41,9 @@ const sessionStateSnapshot = (states: StateDef[]): StateDef[] =>
     candidateFrames: state.candidateFrames?.map((candidate) =>
       candidate.sourcePath ? { ...candidate, png: undefined } : candidate
     ),
+    items: state.currentVersionId ? [] : state.items,
+    rawStrip: state.currentVersionId ? undefined : state.rawStrip,
+    rawExtractedFrames: state.currentVersionId ? [] : state.rawExtractedFrames,
   }));
 
 const characterFromLibrary = (item: CharacterLibraryItem): CharacterDef => ({
@@ -99,6 +103,10 @@ const restoreStates = (
         frameSamplerMode: normalizeFrameSamplerMode((state as any).frameSamplerMode),
         alignmentMode: normalizeAlignmentMode((state as any).alignmentMode),
         frameFitMode: normalizeFrameFitMode((state as any).frameFitMode ?? fallbackFitMode),
+        currentVersionId: String((state as any).currentVersionId ?? "") || undefined,
+        currentVersionNumber: Number((state as any).currentVersionNumber) || undefined,
+        versionCount: Number((state as any).versionCount) || undefined,
+        backgroundRemovalMode: normalizeBackgroundRemovalMode((state as any).backgroundRemovalMode),
         trace: (state as any).trace,
         candidateFrames: Array.isArray((state as any).candidateFrames) ? (state as any).candidateFrames : [],
         items: Array.isArray(state.items)
@@ -138,6 +146,8 @@ const normalizeAlignmentMode = (value?: string | null): AlignmentMode =>
   value === "game_anchor_normalize" ? "game_anchor_normalize" : "preserve_source_canvas";
 const normalizeFrameFitMode = (value?: string | null): FrameFitMode =>
   value === "auto_expand" || value === "crop" ? value : "contain";
+const normalizeBackgroundRemovalMode = (value?: string | null): BackgroundRemovalMode =>
+  value === "chroma" || value === "neural" || value === "hybrid" ? value : "inherit";
 const defaultAlignmentMode = (pipeline: AnimationPipeline, motionMode: MotionSourceMode): AlignmentMode =>
   motionMode === "direct" || pipeline === "video_to_frames" ? "preserve_source_canvas" : "game_anchor_normalize";
 
@@ -157,6 +167,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
   const [confirmNew, setConfirmNew] = useState(false);
+  const [versionStateId, setVersionStateId] = useState<string | null>(null);
   const [character, setCharacter] = useState<CharacterDef>(emptyCharacter());
   const [characterLibrary, setCharacterLibrary] = useState<CharacterLibraryItem[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState<string | null>(null);
@@ -240,7 +251,7 @@ export default function App() {
   };
 
   const sessionPayload = (stateList: StateDef[] = statesRef.current) => JSON.stringify({
-    v: 4,
+    v: 5,
     activeCharacterId: activeCharacterIdRef.current,
     workspaces: syncCurrentWorkspace(stateList).map((workspace) => ({
       ...workspace,
@@ -354,6 +365,31 @@ export default function App() {
               rawWorkspace.frameFitMode,
               langRef.current,
             );
+			for (let index = 0; index < restoredStates.length; index++) {
+				const state = restoredStates[index];
+				if (!state.currentVersionId) continue;
+				try {
+					const version: any = await GetAnimationVersion(state.currentVersionId);
+					const versions: any[] = await ListAnimationVersions(characterId, state.id, false) as any;
+					restoredStates[index] = {
+						...state,
+						currentVersionNumber: version.versionNumber,
+						versionCount: versions.length,
+						status: version.status === "review" ? "review" : "done",
+						items: Array.isArray(version.workingComposition) ? version.workingComposition : [],
+						rawStrip: version.rawStrip || undefined,
+						rawVideoPath: version.rawVideoPath || undefined,
+						rawExtractedFrames: Array.isArray(version.rawExtractedFrames) ? version.rawExtractedFrames : [],
+						candidateFrames: Array.isArray(version.candidateFrames) ? version.candidateFrames : [],
+						trace: version.trace,
+						warnings: Array.isArray(version.warnings) ? version.warnings : [],
+						scores: version.scores,
+						sequenceMetrics: version.sequenceMetrics,
+					};
+				} catch {
+					// A missing version is recoverable: keep the lightweight state.
+				}
+			}
             const selected = restoredStates.some((state) => state.id === rawWorkspace.selectedId)
               ? rawWorkspace.selectedId
               : null;
@@ -463,7 +499,7 @@ export default function App() {
         selectedRef.current = activeWorkspace.selectedId;
         if (recovered.length > 0) {
           const recoveredPayload = JSON.stringify({
-            v: 4,
+			v: 5,
             activeCharacterId: restoredActiveId,
             workspaces: restoredWorkspaces.map((workspace) => ({
               ...workspace,
@@ -650,6 +686,82 @@ export default function App() {
     // 직전 방향의 결과(정면 스트립, 미러 소스)를 읽을 수 있어야 함
     statesRef.current = statesRef.current.map((s) => (s.id === id ? { ...s, ...patch } : s));
     setStates(statesRef.current);
+	const current = statesRef.current.find((state) => state.id === id);
+	if (current?.currentVersionId && patch.items && patch.status === undefined) {
+		void UpdateAnimationVersionComposition(current.currentVersionId, patch.items as any).catch((error) => {
+			toast("error", localizeBackendText(`版本编排保存失败：${String(error)}`, lang));
+		});
+	}
+  };
+
+  const applyAnimationVersion = (id: string, version: any, versionCount?: number) => {
+	const state = statesRef.current.find((item) => item.id === id);
+	if (!state) return;
+	if (!version) {
+		updateState(id, {
+			currentVersionId: undefined,
+			currentVersionNumber: undefined,
+			versionCount: versionCount ?? 0,
+			status: "idle",
+			items: [],
+			rawStrip: undefined,
+			rawVideoPath: undefined,
+			rawExtractedFrames: [],
+			candidateFrames: [],
+			trace: undefined,
+			warnings: [],
+			scores: undefined,
+			sequenceMetrics: undefined,
+			qualityReview: undefined,
+			error: undefined,
+		});
+		return;
+	}
+	updateState(id, {
+		currentVersionId: version.id,
+		currentVersionNumber: version.versionNumber,
+		versionCount: versionCount ?? state.versionCount ?? version.versionNumber,
+		status: version.status === "review" ? "review" : "done",
+		items: Array.isArray(version.workingComposition) ? version.workingComposition : [],
+		rawStrip: version.rawStrip || undefined,
+		rawVideoPath: version.rawVideoPath || undefined,
+		rawExtractedFrames: Array.isArray(version.rawExtractedFrames) ? version.rawExtractedFrames : [],
+		candidateFrames: Array.isArray(version.candidateFrames) ? version.candidateFrames : [],
+		trace: version.trace,
+		warnings: Array.isArray(version.warnings) ? version.warnings : [],
+		scores: version.scores,
+		sequenceMetrics: version.sequenceMetrics,
+		feedback: version.feedback ?? state.feedback,
+	});
+  };
+
+  const commitVersion = async (state: StateDef, items: FrameItem[], result: any, source: string, status: string, feedback = "", parentVersionId?: string) => {
+	const characterId = activeCharacterIdRef.current || charRef.current.libraryId || "workspace";
+	const version: any = await CommitAnimationVersion({
+		characterId,
+		stateId: state.id,
+		stateName: state.name,
+		status,
+		source,
+		parentVersionId: parentVersionId ?? state.currentVersionId ?? "",
+		backgroundRemovalMode: result?.trace?.backgroundRemovalMode || normalizeBackgroundRemovalMode(state.backgroundRemovalMode),
+		frames: items,
+		rawStrip: result?.rawStrip ?? "",
+		rawVideoPath: result?.rawVideoPath ?? "",
+		rawExtractedFrames: result?.rawExtractedFrames ?? [],
+		candidateFrames: result?.candidateFrames ?? [],
+		warnings: result?.warnings ?? [],
+		feedback,
+		trace: result?.trace ?? {},
+		scores: result?.scores ?? {},
+		sequenceMetrics: result?.sequenceMetrics ?? {},
+		generationParameters: result?.trace?.parameters ?? {},
+		characterSnapshot: { id: characterId, name: charRef.current.name, description: charRef.current.description, styleKey: charRef.current.styleKey, styleCustom: charRef.current.styleCustom },
+		stateSnapshot: { name: state.name, label: state.label, action: state.action, frames: state.frames, fps: state.fps, loop: state.loop, facing: state.facing ?? "" },
+	} as any);
+	const versions: any[] = await ListAnimationVersions(characterId, state.id, false) as any;
+	applyAnimationVersion(state.id, version, versions.length);
+	return version;
   };
 
   const commitGenerationJournal = async (requestId: string) => {
@@ -737,6 +849,13 @@ export default function App() {
           selected: src.items[i]?.selected ?? true,
           source: "mirror",
         }));
+		if (items.length > 0) {
+			await commitVersion(st, items, {
+				warnings: [],
+				scores: src.scores ?? {},
+				trace: { ...(src.trace ?? {}), backgroundRemovalMode: src.trace?.backgroundRemovalMode ?? "chroma" },
+			}, "mirror", "done", feedback, src.currentVersionId);
+		}
         updateState(id, {
           status: items.length > 0 ? "done" : "error",
           error: items.length > 0 ? undefined : t("err_mirror_fail"),
@@ -781,6 +900,7 @@ export default function App() {
         frameSamplerMode: normalizeFrameSamplerMode(st.frameSamplerMode),
         alignmentMode: normalizeAlignmentMode(st.alignmentMode ?? defaultAlignmentMode(actualPipeline, motionSourceMode)),
         frameFitMode: normalizeFrameFitMode(st.frameFitMode ?? frameFitMode),
+		backgroundRemovalMode: normalizeBackgroundRemovalMode(st.backgroundRemovalMode),
         state: { name: st.name, frames: st.frames, fps: st.fps, loop: st.loop, action: st.action, facing: st.facing ?? "" },
       } as any);
 
@@ -835,6 +955,7 @@ export default function App() {
         frameSamplerMode: normalizeFrameSamplerMode(st.frameSamplerMode),
         alignmentMode: normalizeAlignmentMode(st.alignmentMode ?? defaultAlignmentMode(actualPipeline, motionSourceMode)),
         frameFitMode: normalizeFrameFitMode(st.frameFitMode ?? frameFitMode),
+		backgroundRemovalMode: normalizeBackgroundRemovalMode(st.backgroundRemovalMode),
         cellSize: typeof res.cellSize === "number" && res.cellSize > 0 ? res.cellSize : st.cellSize,
         warnings: [
           ...(preservedPrevious && backendError ? [localizeBackendText(`本次生成未产出新帧，已保留旧结果：${backendError}`, lang)] : []),
@@ -843,6 +964,9 @@ export default function App() {
         ],
         scores,
       });
+	  if (hasReturnedFrames) {
+		await commitVersion(st, items, res, res?.trace?.calledAi ? (st.currentVersionId ? "regeneration" : "generation") : "generation", needsReview ? "review" : "done", feedback);
+	  }
       if (res.rawVideoPath) await commitGenerationJournal(String(res.requestId || requestId));
       return usable;
     } catch (e) {
@@ -955,7 +1079,8 @@ export default function App() {
         videoSeconds: settings?.videoSeconds ?? 4,
         frameSamplerMode: normalizeFrameSamplerMode(st.frameSamplerMode),
         alignmentMode: normalizeAlignmentMode(st.alignmentMode ?? "preserve_source_canvas"),
-        frameFitMode: normalizeFrameFitMode(st.frameFitMode ?? frameFitMode),
+		frameFitMode: normalizeFrameFitMode(st.frameFitMode ?? frameFitMode),
+		backgroundRemovalMode: normalizeBackgroundRemovalMode(st.backgroundRemovalMode),
         state: { name: st.name, frames: st.frames, fps: st.fps, loop: st.loop, action: st.action, facing: st.facing ?? "" },
       } as any);
       const items: FrameItem[] = (res.frames ?? []).map((png: string, i: number) => ({
@@ -1003,6 +1128,9 @@ export default function App() {
         ],
         scores,
       });
+	  if (hasReturnedFrames) {
+		await commitVersion(st, items, res, "reprocess", needsReview ? "review" : "done", st.feedback);
+	  }
       toast(usable ? "success" : "info", usable ? t("toast_video_reprocessed") : t("toast_video_reprocess_needs_review"));
     } catch (e) {
       const raw = String(e);
@@ -1546,6 +1674,7 @@ export default function App() {
             onAtlasColumns={setAtlasColumns}
             onExportAnimation={handleExportAnimation}
             onSaveMotionLibrary={handleSaveStateToMotionLibrary}
+			onOpenVersions={setVersionStateId}
           />
         </section>
         </main>
@@ -1567,6 +1696,17 @@ export default function App() {
           videoModel: settings?.providers?.[activeVideoProvider(settings)]?.videoModel,
         }}
       />
+
+	  {versionStateId && activeCharacterId && states.find((state) => state.id === versionStateId) && (
+		<VersionManager
+			open
+			characterId={activeCharacterId}
+			state={states.find((state) => state.id === versionStateId)!}
+			cellSize={cellSize}
+			onClose={() => setVersionStateId(null)}
+			onApply={(version, count) => applyAnimationVersion(versionStateId, version, count)}
+		/>
+	  )}
 
       {showSettings && settings && (
         <SettingsModal

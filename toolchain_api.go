@@ -43,9 +43,10 @@ type imageJobRequest struct {
 }
 
 type imagePostProcessRequest struct {
-	RemoveBackground bool `json:"removeBackground,omitempty"`
-	Pixelize         bool `json:"pixelize,omitempty"`
-	PixelSize        int  `json:"pixelSize,omitempty"`
+	RemoveBackground      bool   `json:"removeBackground,omitempty"`
+	BackgroundRemovalMode string `json:"backgroundRemovalMode,omitempty"`
+	Pixelize              bool   `json:"pixelize,omitempty"`
+	PixelSize             int    `json:"pixelSize,omitempty"`
 }
 
 type videoJobRequest struct {

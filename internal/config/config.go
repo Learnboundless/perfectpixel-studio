@@ -22,21 +22,23 @@ type ProviderCfg struct {
 
 // Settings는 사용자 설정입니다.
 type Settings struct {
-	Provider          string      `json:"provider,omitempty"`          // 旧版图片 provider，保留用于兼容迁移
-	ImageProvider     string      `json:"imageProvider,omitempty"`     // gemini | openai | openrouter | fal | byteplus | zetatechs
-	VideoProvider     string      `json:"videoProvider,omitempty"`     // zetatechs | volcengine
-	TextProvider      string      `json:"textProvider,omitempty"`      // volcengine | zetatechs | openai | openrouter
-	VisionProvider    string      `json:"visionProvider,omitempty"`    // zetatechs | openai | openrouter
-	AnimationPipeline string      `json:"animationPipeline,omitempty"` // video_to_frames | image_strip
-	VideoSeconds      int         `json:"videoSeconds,omitempty"`
-	VideoFPS          int         `json:"videoFps,omitempty"`
-	Gemini            ProviderCfg `json:"gemini"`
-	OpenAI            ProviderCfg `json:"openai"`
-	OpenRouter        ProviderCfg `json:"openrouter"`
-	Fal               ProviderCfg `json:"fal"`
-	BytePlus          ProviderCfg `json:"byteplus"`
-	ZetaTechs         ProviderCfg `json:"zetatechs"`
-	Volcengine        ProviderCfg `json:"volcengine"`
+	Provider                  string      `json:"provider,omitempty"`          // 旧版图片 provider，保留用于兼容迁移
+	ImageProvider             string      `json:"imageProvider,omitempty"`     // gemini | openai | openrouter | fal | byteplus | zetatechs
+	VideoProvider             string      `json:"videoProvider,omitempty"`     // zetatechs | volcengine
+	TextProvider              string      `json:"textProvider,omitempty"`      // volcengine | zetatechs | openai | openrouter
+	VisionProvider            string      `json:"visionProvider,omitempty"`    // zetatechs | openai | openrouter
+	AnimationPipeline         string      `json:"animationPipeline,omitempty"` // video_to_frames | image_strip
+	VideoSeconds              int         `json:"videoSeconds,omitempty"`
+	VideoFPS                  int         `json:"videoFps,omitempty"`
+	BackgroundRemovalMode     string      `json:"backgroundRemovalMode,omitempty"`
+	AnimationVersionWarningGB int         `json:"animationVersionWarningGb,omitempty"`
+	Gemini                    ProviderCfg `json:"gemini"`
+	OpenAI                    ProviderCfg `json:"openai"`
+	OpenRouter                ProviderCfg `json:"openrouter"`
+	Fal                       ProviderCfg `json:"fal"`
+	BytePlus                  ProviderCfg `json:"byteplus"`
+	ZetaTechs                 ProviderCfg `json:"zetatechs"`
+	Volcengine                ProviderCfg `json:"volcengine"`
 
 	// 레거시 필드 (v1 → 마이그레이션용)
 	LegacyAPIKey string `json:"apiKey,omitempty"`
@@ -87,6 +89,16 @@ func GenerationArtifactsDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "perfectpixel", "generation-artifacts"), nil
+}
+
+// AnimationVersionsDir stores immutable generation baselines and editable
+// working compositions independently from the lightweight workspace session.
+func AnimationVersionsDir() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "perfectpixel", "animation-versions"), nil
 }
 
 // PendingGenerationsPath stores downloaded videos until the frontend commits
@@ -201,6 +213,17 @@ func Load() Settings {
 	}
 	if s.VideoFPS <= 0 {
 		s.VideoFPS = 12
+	}
+	if s.BackgroundRemovalMode == "" {
+		s.BackgroundRemovalMode = "hybrid"
+	}
+	switch s.BackgroundRemovalMode {
+	case "inherit", "chroma", "neural", "hybrid":
+	default:
+		s.BackgroundRemovalMode = "hybrid"
+	}
+	if s.AnimationVersionWarningGB <= 0 {
+		s.AnimationVersionWarningGB = 5
 	}
 
 	// v3 단일 provider는 이미지 provider로 마이그레이션합니다.

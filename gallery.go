@@ -189,6 +189,27 @@ func (a *App) LoadVideoDataURL(path string) (string, error) {
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
+// LoadAnimationVersionResource resolves only opaque resources issued by
+// GetAnimationVersion. It never accepts an arbitrary filesystem path.
+func (a *App) LoadAnimationVersionResource(token string, maxDim int) (string, error) {
+	if a.animationVersions == nil {
+		return "", errors.New("animation version store is unavailable")
+	}
+	path, err := a.animationVersions.ResolveResource(token)
+	if err != nil {
+		return "", err
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mp4", ".webm", ".mov":
+		return a.LoadVideoDataURL(path)
+	default:
+		if maxDim > 0 {
+			return a.LoadImageThumb(path, maxDim)
+		}
+		return a.LoadImageFull(path)
+	}
+}
+
 // LoadImageThumb은 maxDim 안에 들어가는 다운스케일 썸네일 dataURL을 반환합니다.
 func (a *App) LoadImageThumb(path string, maxDim int) (string, error) {
 	if maxDim <= 0 {

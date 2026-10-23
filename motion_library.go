@@ -63,32 +63,37 @@ type GenerationMediaSlotTrace struct {
 }
 
 type GenerationTrace struct {
-	Pipeline                 string                     `json:"pipeline"`
-	Provider                 string                     `json:"provider,omitempty"`
-	ImageProvider            string                     `json:"imageProvider,omitempty"`
-	VideoProvider            string                     `json:"videoProvider,omitempty"`
-	Model                    string                     `json:"model,omitempty"`
-	VideoModel               string                     `json:"videoModel,omitempty"`
-	MotionSourceMode         string                     `json:"motionSourceMode"`
-	MotionSourceID           string                     `json:"motionSourceId,omitempty"`
-	MotionSourceName         string                     `json:"motionSourceName,omitempty"`
-	VideoReferenceMode       string                     `json:"videoReferenceMode,omitempty"`
-	VideoSubjectMode         string                     `json:"videoSubjectMode,omitempty"`
-	ActualVideoReferenceMode string                     `json:"actualVideoReferenceMode,omitempty"`
-	VideoReferenceField      string                     `json:"videoReferenceField,omitempty"`
-	VideoWorkflow            string                     `json:"videoWorkflow,omitempty"`
-	VideoRequestRoute        string                     `json:"videoRequestRoute,omitempty"`
-	VideoMediaSlots          []GenerationMediaSlotTrace `json:"videoMediaSlots,omitempty"`
-	FrameSamplerMode         string                     `json:"frameSamplerMode,omitempty"`
-	AlignmentMode            string                     `json:"alignmentMode,omitempty"`
-	Prompt                   string                     `json:"prompt,omitempty"`
-	CalledAI                 bool                       `json:"calledAi"`
-	Parameters               map[string]string          `json:"parameters,omitempty"`
-	References               []GenerationReference      `json:"references,omitempty"`
-	Attempts                 []GenerationAttempt        `json:"attempts,omitempty"`
-	Selections               []FrameSelectionTrace      `json:"selections,omitempty"`
-	StartedAt                string                     `json:"startedAt,omitempty"`
-	CompletedAt              string                     `json:"completedAt,omitempty"`
+	Pipeline                  string                     `json:"pipeline"`
+	Provider                  string                     `json:"provider,omitempty"`
+	ImageProvider             string                     `json:"imageProvider,omitempty"`
+	VideoProvider             string                     `json:"videoProvider,omitempty"`
+	Model                     string                     `json:"model,omitempty"`
+	VideoModel                string                     `json:"videoModel,omitempty"`
+	MotionSourceMode          string                     `json:"motionSourceMode"`
+	MotionSourceID            string                     `json:"motionSourceId,omitempty"`
+	MotionSourceName          string                     `json:"motionSourceName,omitempty"`
+	VideoReferenceMode        string                     `json:"videoReferenceMode,omitempty"`
+	VideoSubjectMode          string                     `json:"videoSubjectMode,omitempty"`
+	ActualVideoReferenceMode  string                     `json:"actualVideoReferenceMode,omitempty"`
+	VideoReferenceField       string                     `json:"videoReferenceField,omitempty"`
+	VideoWorkflow             string                     `json:"videoWorkflow,omitempty"`
+	VideoRequestRoute         string                     `json:"videoRequestRoute,omitempty"`
+	VideoMediaSlots           []GenerationMediaSlotTrace `json:"videoMediaSlots,omitempty"`
+	FrameSamplerMode          string                     `json:"frameSamplerMode,omitempty"`
+	AlignmentMode             string                     `json:"alignmentMode,omitempty"`
+	BackgroundRemovalMode     string                     `json:"backgroundRemovalMode,omitempty"`
+	BackgroundRemovalModel    string                     `json:"backgroundRemovalModel,omitempty"`
+	BackgroundRemovalSHA256   string                     `json:"backgroundRemovalSha256,omitempty"`
+	BackgroundRemovalMs       int64                      `json:"backgroundRemovalMs,omitempty"`
+	BackgroundRemovalFallback string                     `json:"backgroundRemovalFallback,omitempty"`
+	Prompt                    string                     `json:"prompt,omitempty"`
+	CalledAI                  bool                       `json:"calledAi"`
+	Parameters                map[string]string          `json:"parameters,omitempty"`
+	References                []GenerationReference      `json:"references,omitempty"`
+	Attempts                  []GenerationAttempt        `json:"attempts,omitempty"`
+	Selections                []FrameSelectionTrace      `json:"selections,omitempty"`
+	StartedAt                 string                     `json:"startedAt,omitempty"`
+	CompletedAt               string                     `json:"completedAt,omitempty"`
 }
 
 type FrameSelectionTrace struct {
@@ -325,6 +330,34 @@ func (a *App) DeleteMotionLibraryItem(id string) error {
 }
 
 func (a *App) SaveMotionLibraryItem(args SaveMotionLibraryItemArgs) (MotionLibraryItem, error) {
+	if strings.HasPrefix(strings.TrimSpace(args.SourcePath), animationVersionResourcePrefix) {
+		path, err := a.animationVersions.ResolveResource(args.SourcePath)
+		if err != nil {
+			return MotionLibraryItem{}, fmt.Errorf("无法读取版本源素材: %w", err)
+		}
+		args.SourcePath = copyMotionLibrarySource(path)
+	}
+	for i, value := range args.RawFrames {
+		if !strings.HasPrefix(strings.TrimSpace(value), animationVersionResourcePrefix) {
+			continue
+		}
+		loaded, err := a.LoadAnimationVersionResource(value, 0)
+		if err != nil {
+			return MotionLibraryItem{}, fmt.Errorf("无法读取版本原始帧 %d: %w", i+1, err)
+		}
+		args.RawFrames[i] = loaded
+	}
+	for i := range args.CandidateFrames {
+		if !strings.HasPrefix(strings.TrimSpace(args.CandidateFrames[i].SourcePath), animationVersionResourcePrefix) {
+			continue
+		}
+		loaded, err := a.LoadAnimationVersionResource(args.CandidateFrames[i].SourcePath, 0)
+		if err != nil {
+			return MotionLibraryItem{}, fmt.Errorf("无法读取版本候选帧 %d: %w", i+1, err)
+		}
+		args.CandidateFrames[i].PNG = loaded
+		args.CandidateFrames[i].SourcePath = ""
+	}
 	now := time.Now().Format(time.RFC3339)
 	id := strings.TrimSpace(args.ID)
 	if id == "" {
@@ -516,7 +549,8 @@ func (a *App) ImportMotionLibraryFile(args ImportMotionLibraryArgs) (MotionLibra
 			return MotionLibraryItem{}, err
 		}
 		nimg := sprite.ToNRGBA(img)
-		clean := sprite.RemoveBackground(nimg)
+		remover, _ := appBackgroundRemover("inherit")
+		clean, _ := remover.Remove(nimg)
 		extracted := sprite.ExtractFrames(clean, expected, cellSize, cellSize, margin)
 		rawFrames = extracted.Frames
 		if len(rawFrames) == 0 {
@@ -709,7 +743,8 @@ func (a *App) prepareMotionSource(ctx context.Context, id string, expected, cell
 		if err != nil {
 			return preparedMotionSource{}, err
 		}
-		clean := sprite.RemoveBackground(sprite.ToNRGBA(img))
+		remover, _ := appBackgroundRemover("inherit")
+		clean, _ := remover.Remove(sprite.ToNRGBA(img))
 		extracted := sprite.ExtractFramesWithFitMode(clean, expected, cellSize, cellSize, margin, frameFitMode)
 		rawFrames = extracted.Frames
 		rawURLs = frameURLs(rawFrames)
@@ -729,7 +764,11 @@ func (a *App) prepareMotionSource(ctx context.Context, id string, expected, cell
 	if len(rawURLs) != len(rawFrames) {
 		rawURLs = frameURLs(rawFrames)
 	}
-	processed := sprite.PrepareVideoFramesWithAlignmentAndFit(rawFrames, expected, cellSize, cellSize, margin, sprite.AlignmentPreserveSourceCanvas, frameFitMode)
+	remover, _ := appBackgroundRemover("inherit")
+	processed, _, err := sprite.PrepareVideoFramesWithBackgroundRemoverContext(ctx, rawFrames, expected, cellSize, cellSize, margin, sprite.AlignmentPreserveSourceCanvas, frameFitMode, remover, 2, nil)
+	if err != nil {
+		return preparedMotionSource{}, friendlyErr(err)
+	}
 	if len(processed.Frames) == 0 {
 		return preparedMotionSource{}, errors.New("动作库帧处理后为空")
 	}
@@ -850,7 +889,8 @@ func loadMotionFramesFromSource(ctx context.Context, item MotionLibraryItem, exp
 		if err != nil {
 			return nil, nil, err
 		}
-		clean := sprite.RemoveBackground(sprite.ToNRGBA(img))
+		remover, _ := appBackgroundRemover("inherit")
+		clean, _ := remover.Remove(sprite.ToNRGBA(img))
 		extracted := sprite.ExtractFrames(clean, expected, clean.Bounds().Dy(), clean.Bounds().Dy(), max(8, clean.Bounds().Dy()/12))
 		return extracted.Frames, frameURLs(extracted.Frames), nil
 	}

@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	xdraw "golang.org/x/image/draw"
 )
@@ -1030,14 +1032,85 @@ func PrepareVideoFramesWithAlignment(frames []*image.NRGBA, expected, cellW, cel
 }
 
 func PrepareVideoFramesWithAlignmentAndFit(frames []*image.NRGBA, expected, cellW, cellH, margin int, alignmentMode, fitMode string) ExtractResult {
-	cleaned := make([]*image.NRGBA, 0, len(frames))
-	for _, f := range frames {
-		cleaned = append(cleaned, RemoveBackground(f))
+	result, _ := PrepareVideoFramesWithBackgroundRemover(frames, expected, cellW, cellH, margin, alignmentMode, fitMode, NewBackgroundRemover("chroma", nil))
+	return result
+}
+
+// PrepareVideoFramesWithBackgroundRemover keeps one remover/session for a
+// whole sequence and returns the actual model/fallback trace for persistence.
+func PrepareVideoFramesWithBackgroundRemover(frames []*image.NRGBA, expected, cellW, cellH, margin int, alignmentMode, fitMode string, remover *BackgroundRemover) (ExtractResult, BackgroundRemovalTrace) {
+	result, trace, _ := PrepareVideoFramesWithBackgroundRemoverContext(context.Background(), frames, expected, cellW, cellH, margin, alignmentMode, fitMode, remover, 1, nil)
+	return result, trace
+}
+
+func PrepareVideoFramesWithBackgroundRemoverContext(ctx context.Context, frames []*image.NRGBA, expected, cellW, cellH, margin int, alignmentMode, fitMode string, remover *BackgroundRemover, workers int, progress func(completed, total int)) (ExtractResult, BackgroundRemovalTrace, error) {
+	started := time.Now()
+	if remover == nil {
+		remover = NewBackgroundRemover("chroma", nil)
 	}
+	if workers < 1 {
+		workers = 1
+	}
+	workers = min(workers, max(1, len(frames)))
+	cleaned := make([]*image.NRGBA, len(frames))
+	traces := make([]BackgroundRemovalTrace, len(frames))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	var progressMu sync.Mutex
+	completed := 0
+	worker := func() {
+		defer wg.Done()
+		for index := range jobs {
+			if ctx.Err() != nil {
+				continue
+			}
+			clean, trace := remover.RemoveContext(ctx, frames[index])
+			cleaned[index] = clean
+			traces[index] = trace
+			progressMu.Lock()
+			completed++
+			if progress != nil {
+				progress(completed, len(frames))
+			}
+			progressMu.Unlock()
+		}
+	}
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go worker()
+	}
+	for i := range frames {
+		select {
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			return ExtractResult{Expected: expected}, BackgroundRemovalTrace{}, ctx.Err()
+		case jobs <- i:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return ExtractResult{Expected: expected}, BackgroundRemovalTrace{}, err
+	}
+	var aggregate BackgroundRemovalTrace
+	for _, trace := range traces {
+		if aggregate.RequestedMode == "" {
+			aggregate = trace
+		} else {
+			aggregate.InferenceMs += trace.InferenceMs
+			if trace.Fallback != "" {
+				aggregate.Fallback = trace.Fallback
+				aggregate.ActualMode = trace.ActualMode
+				aggregate.Warnings = append(aggregate.Warnings, trace.Warnings...)
+			}
+		}
+	}
+	aggregate.InferenceMs = time.Since(started).Milliseconds()
 	if NormalizeAlignmentMode(alignmentMode) == AlignmentGameAnchorNormalize {
-		return normalizeFramesToAnchoredCellsWithFit(cleaned, expected, cellW, cellH, margin, fitMode)
+		return normalizeFramesToAnchoredCellsWithFit(cleaned, expected, cellW, cellH, margin, fitMode), aggregate, nil
 	}
-	return normalizeFramesToCellsWithFit(cleaned, expected, cellW, cellH, margin, fitMode)
+	return normalizeFramesToCellsWithFit(cleaned, expected, cellW, cellH, margin, fitMode), aggregate, nil
 }
 
 // NormalizeFramesToCells fits already-transparent frames into sprite cells

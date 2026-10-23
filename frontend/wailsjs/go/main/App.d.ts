@@ -9,7 +9,11 @@ export function CancelGeneration():Promise<void>;
 
 export function CancelGenerationJob(arg1:string):Promise<main.GenerationJob>;
 
+export function ClaimLegacyAnimationRecovery(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.AnimationVersion>;
+
 export function ClearSession():Promise<void>;
+
+export function CommitAnimationVersion(arg1:main.CommitAnimationVersionArgs):Promise<main.AnimationVersion>;
 
 export function CreateImageJob(arg1:Record<string, any>):Promise<main.GenerationJob>;
 
@@ -41,6 +45,10 @@ export function GenerateCharacter(arg1:main.GenerateCharacterArgs):Promise<strin
 
 export function GenerateState(arg1:main.GenerateStateArgs):Promise<main.StateResult>;
 
+export function GetAnimationVersion(arg1:string):Promise<main.AnimationVersion>;
+
+export function GetAnimationVersionStorageStats():Promise<main.AnimationVersionStorageStats>;
+
 export function GetGalleryPath():Promise<string>;
 
 export function GetGenerationCapabilities():Promise<main.ToolchainGenerationCapabilities>;
@@ -51,11 +59,15 @@ export function GetMotionLibraryItem(arg1:string):Promise<main.MotionLibraryItem
 
 export function GetSettings():Promise<main.SettingsInfo>;
 
+export function IgnoreLegacyAnimationRecovery(arg1:string):Promise<void>;
+
 export function ImportAssets(arg1:Record<string, any>):Promise<Array<main.ToolAsset>>;
 
 export function ImportMotionLibraryFile(arg1:main.ImportMotionLibraryArgs):Promise<main.MotionLibraryItem>;
 
 export function ImportMotionLibraryFolder(arg1:main.ImportMotionLibraryArgs):Promise<main.MotionLibraryItem>;
+
+export function ListAnimationVersions(arg1:string,arg2:string,arg3:boolean):Promise<Array<main.AnimationVersionSummary>>;
 
 export function ListAssets():Promise<Array<main.ToolAsset>>;
 
@@ -69,11 +81,15 @@ export function ListGalleryImages():Promise<Array<main.GalleryImage>>;
 
 export function ListGenerationJobs():Promise<Array<main.GenerationJob>>;
 
+export function ListLegacyAnimationRecovery(arg1:boolean):Promise<Array<main.LegacyAnimationRecoveryItem>>;
+
 export function ListMotionLibrary():Promise<Array<main.MotionLibraryItem>>;
 
 export function ListPendingGenerations():Promise<Array<main.PendingGeneration>>;
 
 export function ListPresets():Promise<Array<sprite.PresetInfo>>;
+
+export function LoadAnimationVersionResource(arg1:string,arg2:number):Promise<string>;
 
 export function LoadImageFull(arg1:string):Promise<string>;
 
@@ -91,9 +107,13 @@ export function PickFolder():Promise<string>;
 
 export function PickImage():Promise<string>;
 
+export function PurgeAnimationVersion(arg1:string):Promise<void>;
+
 export function RefreshGenerationCapabilities():Promise<main.ToolchainGenerationCapabilities>;
 
 export function ReprocessVideoState(arg1:main.ReprocessVideoStateArgs):Promise<main.StateResult>;
+
+export function RestoreAnimationVersion(arg1:string):Promise<main.AnimationVersionSummary>;
 
 export function RetryGenerationJob(arg1:string):Promise<main.GenerationJob>;
 
@@ -102,6 +122,10 @@ export function RevealInFinder(arg1:string):Promise<void>;
 export function RewriteRiskyPrompt(arg1:main.RewritePromptArgs):Promise<string>;
 
 export function SaveAnimationPipeline(arg1:string):Promise<void>;
+
+export function SaveAnimationVersionWarningGB(arg1:number):Promise<void>;
+
+export function SaveBackgroundRemovalMode(arg1:string):Promise<void>;
 
 export function SaveCharacterLibraryItem(arg1:main.SaveCharacterLibraryItemArgs):Promise<main.CharacterLibraryItem>;
 
@@ -125,6 +149,8 @@ export function SaveVideoDefaults(arg1:number,arg2:number):Promise<void>;
 
 export function SendAssetToModule(arg1:Record<string, any>):Promise<Record<string, any>>;
 
+export function SetCurrentAnimationVersion(arg1:string,arg2:string,arg3:string):Promise<main.AnimationVersion>;
+
 export function SetImageProvider(arg1:string):Promise<void>;
 
 export function SetProvider(arg1:string):Promise<void>;
@@ -134,3 +160,7 @@ export function SetTextProvider(arg1:string):Promise<void>;
 export function SetVideoProvider(arg1:string):Promise<void>;
 
 export function SetVisionProvider(arg1:string):Promise<void>;
+
+export function SoftDeleteAnimationVersion(arg1:string):Promise<main.AnimationVersionSummary>;
+
+export function UpdateAnimationVersionComposition(arg1:string,arg2:Array<main.AnimationVersionFrame>):Promise<main.AnimationVersion>;

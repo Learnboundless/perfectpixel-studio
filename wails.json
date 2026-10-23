@@ -7,6 +7,9 @@
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/wails-dev-frontend.ps1",
   "frontend:dev:serverUrl": "http://127.0.0.1:5190",
+  "postBuildHooks": {
+    "windows/amd64": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/copy-windows-runtime.ps1 ${bin}"
+  },
   "author": {
     "name": "",
     "email": ""

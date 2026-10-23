@@ -88,6 +88,12 @@ Section
 
     !insertmacro wails.files
 
+    File /oname=onnxruntime.dll "..\..\..\resources\background-removal\onnxruntime.dll"
+    File /oname=THIRD_PARTY_NOTICES.md "..\..\..\THIRD_PARTY_NOTICES.md"
+    SetOutPath "$INSTDIR\third_party\licenses"
+    File /r "..\..\..\third_party\licenses\*.*"
+    SetOutPath $INSTDIR
+
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 

@@ -33,6 +33,7 @@ export default function ImageStudio({ onOpenAssets, onOpenTasks, onNavigate, def
   const [negativePrompt, setNegativePrompt] = useState("");
   const [editMode, setEditMode] = useState(false);
   const [removeBackground, setRemoveBackground] = useState(false);
+  const [backgroundRemovalMode, setBackgroundRemovalMode] = useState("inherit");
   const [pixelize, setPixelize] = useState(false);
   const [pixelSize, setPixelSize] = useState(128);
   const imageJobs = useMemo(() => jobs.filter((job) => job.kind === "image" && (job.sourceModule === "image" || job.request?.sourceModule === "image")), [jobs]);
@@ -84,7 +85,7 @@ export default function ImageStudio({ onOpenAssets, onOpenTasks, onNavigate, def
         variants,
         provider,
         model,
-        postProcess: { removeBackground, pixelize, pixelSize: pixelize ? pixelSize : undefined },
+        postProcess: { removeBackground, backgroundRemovalMode: removeBackground ? backgroundRemovalMode : undefined, pixelize, pixelSize: pixelize ? pixelSize : undefined },
       });
       notify("success", t("tool_job_created"));
     } catch (error) {
@@ -125,6 +126,7 @@ export default function ImageStudio({ onOpenAssets, onOpenTasks, onNavigate, def
             )}
             <div className="derivative-options">
               <label className="tool-checkbox"><input type="checkbox" checked={removeBackground} onChange={(event) => setRemoveBackground(event.target.checked)} /><span><strong>{t("tool_remove_background")}</strong><small>{t("tool_keep_original")}</small></span></label>
+              {removeBackground && <div className="tool-field"><FieldLabel>{t("tool_background_removal_mode")}</FieldLabel><Select value={backgroundRemovalMode} onValueChange={setBackgroundRemovalMode}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="inherit">{t("tool_background_inherit")}</SelectItem><SelectItem value="chroma">{t("tool_background_chroma")}</SelectItem><SelectItem value="neural">{t("tool_background_neural")}</SelectItem><SelectItem value="hybrid">{t("tool_background_hybrid")}</SelectItem></SelectContent></Select></div>}
               <label className="tool-checkbox"><input type="checkbox" checked={pixelize} onChange={(event) => setPixelize(event.target.checked)} /><span><strong>{t("tool_pixelize")}</strong><small>{t("tool_keep_original")}</small></span></label>
               {pixelize && <div className="tool-field pixel-size"><FieldLabel>{t("tool_pixel_canvas")}</FieldLabel><Input type="number" min={32} max={512} step={16} value={pixelSize} onChange={(event) => setPixelSize(Number(event.target.value))} /></div>}
             </div>

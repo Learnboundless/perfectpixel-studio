@@ -49,9 +49,11 @@ const (
 type App struct {
 	ctx context.Context
 
-	toolchainStore *ToolchainStore
-	toolchainJobs  *GenerationJobManager
-	toolchainErr   error
+	toolchainStore      *ToolchainStore
+	toolchainJobs       *GenerationJobManager
+	toolchainErr        error
+	animationVersions   *AnimationVersionStore
+	animationVersionErr error
 
 	genMu      sync.Mutex
 	genCancels map[int]context.CancelFunc // 진행 중인 생성 작업들의 취소 함수 (병렬 배치 지원)
@@ -62,13 +64,17 @@ type App struct {
 // NewApp은 새 App 인스턴스를 생성합니다.
 func NewApp() *App {
 	store, err := NewToolchainStore()
-	return &App{toolchainStore: store, toolchainErr: err}
+	versions, versionErr := NewAnimationVersionStore()
+	return &App{toolchainStore: store, toolchainErr: err, animationVersions: versions, animationVersionErr: versionErr}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	if err := a.initToolchain(ctx); err != nil {
 		a.emit("toolchain-error", map[string]any{"message": err.Error()})
+	}
+	if a.animationVersionErr != nil {
+		a.emit("animation-version-error", map[string]any{"message": a.animationVersionErr.Error()})
 	}
 }
 
@@ -231,15 +237,17 @@ type ProviderInfo struct {
 
 // SettingsInfo는 프론트엔드에 노출되는 설정 상태입니다.
 type SettingsInfo struct {
-	Provider          string                  `json:"provider"`
-	ImageProvider     string                  `json:"imageProvider"`
-	VideoProvider     string                  `json:"videoProvider"`
-	TextProvider      string                  `json:"textProvider"`
-	VisionProvider    string                  `json:"visionProvider"`
-	AnimationPipeline string                  `json:"animationPipeline"`
-	VideoSeconds      int                     `json:"videoSeconds"`
-	VideoFPS          int                     `json:"videoFps"`
-	Providers         map[string]ProviderInfo `json:"providers"`
+	Provider                  string                  `json:"provider"`
+	ImageProvider             string                  `json:"imageProvider"`
+	VideoProvider             string                  `json:"videoProvider"`
+	TextProvider              string                  `json:"textProvider"`
+	VisionProvider            string                  `json:"visionProvider"`
+	AnimationPipeline         string                  `json:"animationPipeline"`
+	VideoSeconds              int                     `json:"videoSeconds"`
+	VideoFPS                  int                     `json:"videoFps"`
+	BackgroundRemovalMode     string                  `json:"backgroundRemovalMode"`
+	AnimationVersionWarningGB int                     `json:"animationVersionWarningGb"`
+	Providers                 map[string]ProviderInfo `json:"providers"`
 }
 
 func keyPreview(key string) string {
@@ -255,15 +263,17 @@ func (a *App) GetSettings() SettingsInfo {
 	zetaImageModels, zetaVideoModels, zetaModelStatus := a.zetaTechsDynamicModelLists(s)
 	volcengineVideoModels, volcengineModelStatus := a.volcengineDynamicVideoModels(s)
 	info := SettingsInfo{
-		Provider:          s.ImageProvider,
-		ImageProvider:     s.ImageProvider,
-		VideoProvider:     s.VideoProvider,
-		TextProvider:      s.TextProvider,
-		VisionProvider:    s.VisionProvider,
-		AnimationPipeline: s.AnimationPipeline,
-		VideoSeconds:      s.VideoSeconds,
-		VideoFPS:          s.VideoFPS,
-		Providers:         map[string]ProviderInfo{},
+		Provider:                  s.ImageProvider,
+		ImageProvider:             s.ImageProvider,
+		VideoProvider:             s.VideoProvider,
+		TextProvider:              s.TextProvider,
+		VisionProvider:            s.VisionProvider,
+		AnimationPipeline:         s.AnimationPipeline,
+		VideoSeconds:              s.VideoSeconds,
+		VideoFPS:                  s.VideoFPS,
+		BackgroundRemovalMode:     s.BackgroundRemovalMode,
+		AnimationVersionWarningGB: s.AnimationVersionWarningGB,
+		Providers:                 map[string]ProviderInfo{},
 	}
 	for _, p := range gen.SupportedProviders {
 		cfg := s.Cfg(p)
@@ -585,6 +595,22 @@ func (a *App) SaveAnimationPipeline(pipeline string) error {
 	return config.Save(s)
 }
 
+func (a *App) SaveBackgroundRemovalMode(mode string) error {
+	mode = normalizeBackgroundRemovalMode(mode)
+	s := config.Load()
+	s.BackgroundRemovalMode = mode
+	return config.Save(s)
+}
+
+func (a *App) SaveAnimationVersionWarningGB(gigabytes int) error {
+	if gigabytes < 1 || gigabytes > 1024 {
+		return errors.New("版本库容量提醒必须在 1 到 1024 GB 之间。")
+	}
+	s := config.Load()
+	s.AnimationVersionWarningGB = gigabytes
+	return config.Save(s)
+}
+
 // SaveVideoDefaults는 비디오 생성 기본 시간을 저장합니다.
 func (a *App) SaveVideoDefaults(seconds, fps int) error {
 	if seconds < 1 || seconds > 15 {
@@ -669,6 +695,12 @@ func (a *App) LoadSession() string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
+	}
+	if migrated, changed, migrateErr := a.migrateSessionToV5(path, data); migrateErr == nil && changed {
+		if err := atomicWritePrivate(path, migrated); err == nil {
+			data = migrated
+			releaseLargeWorkingSet()
+		}
 	}
 	if compacted, changed, err := compactSessionJSON(data); err == nil && changed {
 		if err := atomicWritePrivate(path, compacted); err == nil {
@@ -877,7 +909,8 @@ func (a *App) GenerateCharacter(args GenerateCharacterArgs) (string, error) {
 	}
 	// 배경 제거된 미리보기 제공
 	a.emitProgress("character_process", "", "正在移除背景并像素化...", 86, 3, 4)
-	clean := sprite.RemoveBackground(img)
+	remover, _ := appBackgroundRemover("inherit")
+	clean, _ := remover.Remove(img)
 	if n := sprite.PaletteSizeForStyle(args.StyleKey); n > 0 {
 		single := []*image.NRGBA{clean}
 		sprite.PixelPostProcess(single, n)
@@ -890,49 +923,51 @@ func (a *App) GenerateCharacter(args GenerateCharacterArgs) (string, error) {
 
 // GenerateStateArgs는 상태별 스트립 생성 요청입니다.
 type GenerateStateArgs struct {
-	RequestID           string           `json:"requestId"`
-	StateID             string           `json:"stateId"`
-	BaseImage           string           `json:"baseImage"` // dataURL
-	Description         string           `json:"description"`
-	StyleKey            string           `json:"styleKey"`
-	StyleCustom         string           `json:"styleCustom"`
-	CellSize            int              `json:"cellSize"`
-	SafeMargin          int              `json:"safeMargin"`
-	Feedback            string           `json:"feedback"`
-	RefStrip            string           `json:"refStrip"` // 정면(south) 스트립 dataURL — 방향 세트 생성 시 모션 참조용
-	Pipeline            string           `json:"pipeline"` // video_to_frames | image_strip
-	VideoModel          string           `json:"videoModel"`
-	VideoSeconds        int              `json:"videoSeconds"`
-	VideoFPS            int              `json:"videoFps"`
-	MotionSourceID      string           `json:"motionSourceId"`
-	MotionSourceMode    string           `json:"motionSourceMode"`    // none | direct | guide_image_strip | ai_video
-	VideoReferenceMode  string           `json:"videoReferenceMode"`  // auto | none | identity_reference | first_frame | start_end_frame
-	VideoSubjectMode    string           `json:"videoSubjectMode"`    // auto | include_description | reference_only
-	VideoPromptLanguage string           `json:"videoPromptLanguage"` // auto | zh | en
-	VideoShadowMode     string           `json:"videoShadowMode"`     // avoid | allow_contact
-	FrameSamplerMode    string           `json:"frameSamplerMode"`    // candidate_pool | uniform
-	AlignmentMode       string           `json:"alignmentMode"`       // preserve_source_canvas | game_anchor_normalize
-	FrameFitMode        string           `json:"frameFitMode"`        // contain | auto_expand | crop
-	TargetFrameIndex    int              `json:"targetFrameIndex"`
-	State               sprite.StateSpec `json:"state"`
+	RequestID             string           `json:"requestId"`
+	StateID               string           `json:"stateId"`
+	BaseImage             string           `json:"baseImage"` // dataURL
+	Description           string           `json:"description"`
+	StyleKey              string           `json:"styleKey"`
+	StyleCustom           string           `json:"styleCustom"`
+	CellSize              int              `json:"cellSize"`
+	SafeMargin            int              `json:"safeMargin"`
+	Feedback              string           `json:"feedback"`
+	RefStrip              string           `json:"refStrip"` // 정면(south) 스트립 dataURL — 방향 세트 생성 시 모션 참조용
+	Pipeline              string           `json:"pipeline"` // video_to_frames | image_strip
+	VideoModel            string           `json:"videoModel"`
+	VideoSeconds          int              `json:"videoSeconds"`
+	VideoFPS              int              `json:"videoFps"`
+	MotionSourceID        string           `json:"motionSourceId"`
+	MotionSourceMode      string           `json:"motionSourceMode"`      // none | direct | guide_image_strip | ai_video
+	VideoReferenceMode    string           `json:"videoReferenceMode"`    // auto | none | identity_reference | first_frame | start_end_frame
+	VideoSubjectMode      string           `json:"videoSubjectMode"`      // auto | include_description | reference_only
+	VideoPromptLanguage   string           `json:"videoPromptLanguage"`   // auto | zh | en
+	VideoShadowMode       string           `json:"videoShadowMode"`       // avoid | allow_contact
+	FrameSamplerMode      string           `json:"frameSamplerMode"`      // candidate_pool | uniform
+	AlignmentMode         string           `json:"alignmentMode"`         // preserve_source_canvas | game_anchor_normalize
+	FrameFitMode          string           `json:"frameFitMode"`          // contain | auto_expand | crop
+	BackgroundRemovalMode string           `json:"backgroundRemovalMode"` // inherit | chroma | neural | hybrid
+	TargetFrameIndex      int              `json:"targetFrameIndex"`
+	State                 sprite.StateSpec `json:"state"`
 }
 
 // ReprocessVideoStateArgs reuses a saved raw video and only reruns local
 // frame extraction, background removal, alignment, pixelization, and QA.
 type ReprocessVideoStateArgs struct {
-	RequestID        string           `json:"requestId"`
-	StateID          string           `json:"stateId"`
-	BaseImage        string           `json:"baseImage"`
-	StyleKey         string           `json:"styleKey"`
-	StyleCustom      string           `json:"styleCustom"`
-	CellSize         int              `json:"cellSize"`
-	SafeMargin       int              `json:"safeMargin"`
-	RawVideoPath     string           `json:"rawVideoPath"`
-	VideoSeconds     int              `json:"videoSeconds"`
-	FrameSamplerMode string           `json:"frameSamplerMode"`
-	AlignmentMode    string           `json:"alignmentMode"`
-	FrameFitMode     string           `json:"frameFitMode"`
-	State            sprite.StateSpec `json:"state"`
+	RequestID             string           `json:"requestId"`
+	StateID               string           `json:"stateId"`
+	BaseImage             string           `json:"baseImage"`
+	StyleKey              string           `json:"styleKey"`
+	StyleCustom           string           `json:"styleCustom"`
+	CellSize              int              `json:"cellSize"`
+	SafeMargin            int              `json:"safeMargin"`
+	RawVideoPath          string           `json:"rawVideoPath"`
+	VideoSeconds          int              `json:"videoSeconds"`
+	FrameSamplerMode      string           `json:"frameSamplerMode"`
+	AlignmentMode         string           `json:"alignmentMode"`
+	FrameFitMode          string           `json:"frameFitMode"`
+	BackgroundRemovalMode string           `json:"backgroundRemovalMode"`
+	State                 sprite.StateSpec `json:"state"`
 }
 
 // StateResult는 상태 생성 결과입니다.
@@ -953,6 +988,35 @@ type StateResult struct {
 	Scores             sprite.ScoreResult          `json:"scores"`
 	SequenceMetrics    sprite.FrameSequenceMetrics `json:"sequenceMetrics"`
 	CellSize           int                         `json:"cellSize"`
+}
+
+func normalizeBackgroundRemovalMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "chroma", "neural", "hybrid":
+		return strings.ToLower(strings.TrimSpace(mode))
+	default:
+		return "hybrid"
+	}
+}
+
+func resolveBackgroundRemovalMode(requested string, settings config.Settings) string {
+	if strings.EqualFold(strings.TrimSpace(requested), "inherit") || strings.TrimSpace(requested) == "" {
+		return normalizeBackgroundRemovalMode(settings.BackgroundRemovalMode)
+	}
+	return normalizeBackgroundRemovalMode(requested)
+}
+
+func applyBackgroundRemovalTrace(trace *GenerationTrace, removal sprite.BackgroundRemovalTrace) {
+	if trace == nil {
+		return
+	}
+	trace.BackgroundRemovalMode = removal.ActualMode
+	trace.BackgroundRemovalModel = removal.Model
+	trace.BackgroundRemovalSHA256 = removal.ModelSHA256
+	trace.BackgroundRemovalMs += removal.InferenceMs
+	if removal.Fallback != "" {
+		trace.BackgroundRemovalFallback = removal.Fallback
+	}
 }
 
 func normalizeVideoReferenceMode(mode string) string {
@@ -1085,32 +1149,34 @@ func newGenerationTrace(args GenerateStateArgs, pipeline, motionMode string, set
 		activeProvider = settings.VideoProvider
 	}
 	return GenerationTrace{
-		Pipeline:           pipeline,
-		Provider:           activeProvider,
-		ImageProvider:      settings.ImageProvider,
-		VideoProvider:      settings.VideoProvider,
-		Model:              imageModel,
-		VideoModel:         videoModel,
-		MotionSourceMode:   motionMode,
-		MotionSourceID:     strings.TrimSpace(args.MotionSourceID),
-		VideoReferenceMode: normalizeVideoReferenceMode(args.VideoReferenceMode),
-		VideoSubjectMode:   normalizeVideoSubjectMode(args.VideoSubjectMode),
-		FrameSamplerMode:   sprite.NormalizeFrameSamplerMode(args.FrameSamplerMode),
-		AlignmentMode:      defaultAlignmentModeFor(pipeline, motionMode, args.AlignmentMode),
-		StartedAt:          time.Now().Format(time.RFC3339),
+		Pipeline:              pipeline,
+		Provider:              activeProvider,
+		ImageProvider:         settings.ImageProvider,
+		VideoProvider:         settings.VideoProvider,
+		Model:                 imageModel,
+		VideoModel:            videoModel,
+		MotionSourceMode:      motionMode,
+		MotionSourceID:        strings.TrimSpace(args.MotionSourceID),
+		VideoReferenceMode:    normalizeVideoReferenceMode(args.VideoReferenceMode),
+		VideoSubjectMode:      normalizeVideoSubjectMode(args.VideoSubjectMode),
+		FrameSamplerMode:      sprite.NormalizeFrameSamplerMode(args.FrameSamplerMode),
+		AlignmentMode:         defaultAlignmentModeFor(pipeline, motionMode, args.AlignmentMode),
+		BackgroundRemovalMode: resolveBackgroundRemovalMode(args.BackgroundRemovalMode, settings),
+		StartedAt:             time.Now().Format(time.RFC3339),
 		Parameters: map[string]string{
-			"requestId":        args.RequestID,
-			"stateId":          args.StateID,
-			"state":            args.State.Name,
-			"frames":           fmt.Sprintf("%d", args.State.Frames),
-			"fps":              fmt.Sprintf("%d", args.State.FPS),
-			"loop":             fmt.Sprintf("%t", args.State.Loop),
-			"facing":           args.State.Facing,
-			"videoSeconds":     fmt.Sprintf("%d", args.VideoSeconds),
-			"videoFps":         fmt.Sprintf("%d", args.VideoFPS),
-			"frameSamplerMode": sprite.NormalizeFrameSamplerMode(args.FrameSamplerMode),
-			"alignmentMode":    defaultAlignmentModeFor(pipeline, motionMode, args.AlignmentMode),
-			"frameFitMode":     sprite.NormalizeFrameFitMode(args.FrameFitMode),
+			"requestId":             args.RequestID,
+			"stateId":               args.StateID,
+			"state":                 args.State.Name,
+			"frames":                fmt.Sprintf("%d", args.State.Frames),
+			"fps":                   fmt.Sprintf("%d", args.State.FPS),
+			"loop":                  fmt.Sprintf("%t", args.State.Loop),
+			"facing":                args.State.Facing,
+			"videoSeconds":          fmt.Sprintf("%d", args.VideoSeconds),
+			"videoFps":              fmt.Sprintf("%d", args.VideoFPS),
+			"frameSamplerMode":      sprite.NormalizeFrameSamplerMode(args.FrameSamplerMode),
+			"alignmentMode":         defaultAlignmentModeFor(pipeline, motionMode, args.AlignmentMode),
+			"frameFitMode":          sprite.NormalizeFrameFitMode(args.FrameFitMode),
+			"backgroundRemovalMode": resolveBackgroundRemovalMode(args.BackgroundRemovalMode, settings),
 		},
 	}
 }
@@ -1344,9 +1410,13 @@ func (a *App) GenerateState(args GenerateStateArgs) (StateResult, error) {
 		}
 		nimg := sprite.ToNRGBA(stripImg)
 		bgKey := sprite.DetectBackground(nimg)
-		clean := sprite.RemoveBackground(nimg)
+		remover, _ := appBackgroundRemover(args.BackgroundRemovalMode)
+		clean, removalTrace := remover.Remove(nimg)
+		candTrace := res.Trace
+		applyBackgroundRemovalTrace(&candTrace, removalTrace)
 
-		cand := StateResult{RequestID: args.RequestID, Name: args.State.Name, Pipeline: pipelineImageStrip, Expected: expected, Trace: res.Trace}
+		cand := StateResult{RequestID: args.RequestID, Name: args.State.Name, Pipeline: pipelineImageStrip, Expected: expected, Trace: candTrace}
+		cand.Warnings = append(cand.Warnings, removalTrace.Warnings...)
 		if rawURL, err := pngDataURL(clean); err == nil {
 			cand.RawStrip = rawURL
 			cand.CandidateFrames = append(cand.CandidateFrames, CandidateFrame{
@@ -1719,6 +1789,13 @@ func (a *App) ReprocessVideoState(args ReprocessVideoStateArgs) (StateResult, er
 	if rawVideoPath == "" {
 		return res, errors.New("没有可重新处理的原始视频。")
 	}
+	if strings.HasPrefix(rawVideoPath, animationVersionResourcePrefix) {
+		resolved, err := a.animationVersions.ResolveResource(rawVideoPath)
+		if err != nil {
+			return res, fmt.Errorf("无法读取版本原始视频: %w", err)
+		}
+		rawVideoPath = resolved
+	}
 	cellSize := args.CellSize
 	if cellSize <= 0 {
 		cellSize = 256
@@ -1736,23 +1813,24 @@ func (a *App) ReprocessVideoState(args ReprocessVideoStateArgs) (StateResult, er
 		seconds = 4
 	}
 	genArgs := GenerateStateArgs{
-		RequestID:          args.RequestID,
-		StateID:            args.StateID,
-		BaseImage:          args.BaseImage,
-		StyleKey:           args.StyleKey,
-		StyleCustom:        args.StyleCustom,
-		CellSize:           cellSize,
-		SafeMargin:         margin,
-		Pipeline:           pipelineVideoToFrames,
-		VideoModel:         settings.Cfg(settings.VideoProvider).VideoModel,
-		VideoSeconds:       seconds,
-		VideoFPS:           settings.VideoFPS,
-		MotionSourceMode:   motionSourceModeNone,
-		FrameSamplerMode:   sprite.NormalizeFrameSamplerMode(args.FrameSamplerMode),
-		AlignmentMode:      sprite.NormalizeAlignmentMode(args.AlignmentMode),
-		FrameFitMode:       sprite.NormalizeFrameFitMode(args.FrameFitMode),
-		State:              args.State,
-		VideoReferenceMode: videoReferenceModeNone,
+		RequestID:             args.RequestID,
+		StateID:               args.StateID,
+		BaseImage:             args.BaseImage,
+		StyleKey:              args.StyleKey,
+		StyleCustom:           args.StyleCustom,
+		CellSize:              cellSize,
+		SafeMargin:            margin,
+		Pipeline:              pipelineVideoToFrames,
+		VideoModel:            settings.Cfg(settings.VideoProvider).VideoModel,
+		VideoSeconds:          seconds,
+		VideoFPS:              settings.VideoFPS,
+		MotionSourceMode:      motionSourceModeNone,
+		FrameSamplerMode:      sprite.NormalizeFrameSamplerMode(args.FrameSamplerMode),
+		AlignmentMode:         sprite.NormalizeAlignmentMode(args.AlignmentMode),
+		FrameFitMode:          sprite.NormalizeFrameFitMode(args.FrameFitMode),
+		BackgroundRemovalMode: args.BackgroundRemovalMode,
+		State:                 args.State,
+		VideoReferenceMode:    videoReferenceModeNone,
 	}
 	trace := newGenerationTrace(genArgs, pipelineVideoToFrames, motionSourceModeNone, settings)
 	trace.CalledAI = false
@@ -1875,7 +1953,19 @@ func (a *App) processRawVideoStateInner(ctx context.Context, args GenerateStateA
 	if emitProgress != nil {
 		emitProgress("video_process", "正在移除背景并对齐帧...", progress.Process, 3, 4)
 	}
-	processed := sprite.PrepareVideoFramesWithAlignmentAndFit(rawExtract.Frames, args.State.Frames, cellSize, cellSize, margin, alignmentMode, args.FrameFitMode)
+	remover, resolvedRemovalMode := appBackgroundRemover(args.BackgroundRemovalMode)
+	res.Trace.BackgroundRemovalMode = resolvedRemovalMode
+	processed, removalTrace, err := sprite.PrepareVideoFramesWithBackgroundRemoverContext(ctx, rawExtract.Frames, args.State.Frames, cellSize, cellSize, margin, alignmentMode, args.FrameFitMode, remover, 2, func(completed, total int) {
+		if emitProgress != nil && total > 0 {
+			span := max(1, progress.Pixelize-progress.Process-2)
+			emitProgress("video_process", fmt.Sprintf("正在移除背景并对齐帧... %d/%d", completed, total), progress.Process+completed*span/total, completed, total)
+		}
+	})
+	if err != nil {
+		return res, friendlyErr(err)
+	}
+	applyBackgroundRemovalTrace(&res.Trace, removalTrace)
+	res.Warnings = append(res.Warnings, removalTrace.Warnings...)
 	if len(processed.Frames) == 0 {
 		res.Found = 0
 		res.Warnings = append(res.Warnings, rawExtract.Warnings...)
@@ -1926,7 +2016,10 @@ func (a *App) processRawVideoStateInner(ctx context.Context, args GenerateStateA
 	// Raw and processed copies must not share the same flat list: doing so looks
 	// like accumulation and lets an unprocessed key-color frame replace a final
 	// transparent sprite.
-	timelinePool := sprite.PrepareVideoFramesWithAlignmentAndFit(rawFrames, len(rawFrames), cellSize, cellSize, margin, alignmentMode, args.FrameFitMode)
+	timelinePool, _, err := sprite.PrepareVideoFramesWithBackgroundRemoverContext(ctx, rawFrames, len(rawFrames), cellSize, cellSize, margin, alignmentMode, args.FrameFitMode, remover, 2, nil)
+	if err != nil {
+		return res, friendlyErr(err)
+	}
 	timelineMeta := rawMeta
 	if len(timelinePool.Frames) < len(timelineMeta) {
 		timelineMeta = timelineMeta[:len(timelinePool.Frames)]
@@ -2029,7 +2122,8 @@ func prepareVideoReferenceForSafeFraming(raw []byte) ([]byte, error) {
 	}
 	clean := original
 	if transparent*100 < original.Rect.Dx()*original.Rect.Dy() {
-		clean = sprite.RemoveBackground(original)
+		remover, _ := appBackgroundRemover("inherit")
+		clean, _ = remover.Remove(original)
 	}
 	minX, minY := clean.Rect.Dx(), clean.Rect.Dy()
 	maxX, maxY := -1, -1
@@ -2444,6 +2538,13 @@ func (a *App) ExportAnimation(args ExportAnimationArgs) (string, error) {
 
 // RevealInFinder는 내보낸 폴더를 파일 탐색기에서 엽니다.
 func (a *App) RevealInFinder(path string) {
+	if strings.HasPrefix(strings.TrimSpace(path), animationVersionResourcePrefix) && a.animationVersions != nil {
+		if resolved, err := a.animationVersions.ResolveResource(path); err == nil {
+			path = resolved
+		} else {
+			return
+		}
+	}
 	u := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
 	runtime.BrowserOpenURL(a.ctx, u.String())
 }

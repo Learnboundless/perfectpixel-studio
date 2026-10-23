@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clapperboard, Clock3, Download, Eraser, ExternalLink, FileVideo, FlipHorizontal2, LayoutGrid, ListChecks, Maximize2, Package, RefreshCw, Replace, Save, Settings2, Wand2, X, ZoomIn, ZoomOut } from "lucide-react";
-import { LoadVideoDataURL, RevealInFinder } from "../../wailsjs/go/main/App";
-import { AlignmentMode, CandidateFrame, FrameFitMode, FrameSamplerMode, DirectionInfo, FrameSequenceMetrics, StateDef, selectedFrames, uid } from "../types";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clapperboard, Clock3, Download, Eraser, ExternalLink, FileVideo, FlipHorizontal2, History, LayoutGrid, ListChecks, Maximize2, Package, RefreshCw, Replace, Save, Settings2, Wand2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { LoadAnimationVersionResource, LoadVideoDataURL, RevealInFinder } from "../../wailsjs/go/main/App";
+import { AlignmentMode, BackgroundRemovalMode, CandidateFrame, FrameFitMode, FrameSamplerMode, DirectionInfo, FrameSequenceMetrics, StateDef, selectedFrames, uid } from "../types";
 import { useI18n } from "../i18n";
 import { composeStateLabel, directionName } from "../i18n/catalog";
 import { isCopyrightRestrictionError, localizeBackendText } from "../i18n/backend";
@@ -30,10 +30,11 @@ interface IProps {
   onAtlasColumns: (columns: number) => void;
   onExportAnimation: (id: string, format: "gif" | "mp4") => void;
   onSaveMotionLibrary: (id: string) => void;
+  onOpenVersions: (id: string) => void;
 }
 
 // 우측 메인 프리뷰 영역: 재생 / 프레임 관리 / 아틀라스
-export default function PreviewPanel({ state, allStates, directions, cellSize, atlasColumns, busy, onUpdateState, onSelect, onRegenerate, onReprocessVideo, onExport, onAtlasColumns, onExportAnimation, onSaveMotionLibrary }: IProps) {
+export default function PreviewPanel({ state, allStates, directions, cellSize, atlasColumns, busy, onUpdateState, onSelect, onRegenerate, onReprocessVideo, onExport, onAtlasColumns, onExportAnimation, onSaveMotionLibrary, onOpenVersions }: IProps) {
   const { t, lang } = useI18n();
   const [tab, setTab] = useState<ViewTab>("play");
   const [feedback, setFeedback] = useState("");
@@ -106,7 +107,7 @@ export default function PreviewPanel({ state, allStates, directions, cellSize, a
     let cancelled = false;
     setVideoLoading(true);
     setVideoError("");
-    LoadVideoDataURL(state.rawVideoPath)
+    loadVideoReference(state.rawVideoPath)
       .then((src) => {
         if (!cancelled) setVideoSrc(src);
       })
@@ -167,7 +168,7 @@ export default function PreviewPanel({ state, allStates, directions, cellSize, a
     setVideoError("");
     if (force) setVideoSrc("");
     try {
-      setVideoSrc(await LoadVideoDataURL(state.rawVideoPath));
+      setVideoSrc(await loadVideoReference(state.rawVideoPath));
     } catch (e) {
       setVideoError(localizeBackendText(String(e), lang));
     } finally {
@@ -384,6 +385,11 @@ export default function PreviewPanel({ state, allStates, directions, cellSize, a
           </div>
         )}
         <span className="hint">{state.name}</span>
+        {(state.versionCount ?? 0) > 0 && (
+          <Button size="sm" variant="outline" onClick={() => onOpenVersions(state.id)}>
+            <History size={12} /> 当前 v{state.currentVersionNumber ?? "-"} · 共 {state.versionCount} 版
+          </Button>
+        )}
         <span className="spacer" />
         <Tabs value={tab} onValueChange={(v) => setTab(v as ViewTab)}>
           <TabsList className="h-7 w-auto">
@@ -465,6 +471,18 @@ export default function PreviewPanel({ state, allStates, directions, cellSize, a
                     <SelectItem value="contain">{t("frame_fit_contain")}</SelectItem>
                     <SelectItem value="auto_expand">{t("frame_fit_auto_expand")}</SelectItem>
                     <SelectItem value="crop">{t("frame_fit_crop")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+              <label>
+                <span>抠图模式</span>
+                <Select value={state.backgroundRemovalMode ?? "inherit"} disabled={busy} onValueChange={(v) => onUpdateState(state.id, { backgroundRemovalMode: v as BackgroundRemovalMode })}>
+                  <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inherit">继承全局</SelectItem>
+                    <SelectItem value="chroma">色键</SelectItem>
+                    <SelectItem value="neural">神经网络</SelectItem>
+                    <SelectItem value="hybrid">混合</SelectItem>
                   </SelectContent>
                 </Select>
               </label>
@@ -1023,6 +1041,10 @@ export default function PreviewPanel({ state, allStates, directions, cellSize, a
     </>
   );
 }
+
+const loadVideoReference = (reference: string) => reference.startsWith("version-resource:")
+  ? LoadAnimationVersionResource(reference, 0)
+  : LoadVideoDataURL(reference);
 
 function timelineCandidateFrames(candidates: CandidateFrame[]): CandidateFrame[] {
   const byTime = new Map<string, CandidateFrame>();

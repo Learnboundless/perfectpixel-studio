@@ -14,8 +14,16 @@ export function CancelGenerationJob(arg1) {
   return window['go']['main']['App']['CancelGenerationJob'](arg1);
 }
 
+export function ClaimLegacyAnimationRecovery(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ClaimLegacyAnimationRecovery'](arg1, arg2, arg3, arg4);
+}
+
 export function ClearSession() {
   return window['go']['main']['App']['ClearSession']();
+}
+
+export function CommitAnimationVersion(arg1) {
+  return window['go']['main']['App']['CommitAnimationVersion'](arg1);
 }
 
 export function CreateImageJob(arg1) {
@@ -78,6 +86,14 @@ export function GenerateState(arg1) {
   return window['go']['main']['App']['GenerateState'](arg1);
 }
 
+export function GetAnimationVersion(arg1) {
+  return window['go']['main']['App']['GetAnimationVersion'](arg1);
+}
+
+export function GetAnimationVersionStorageStats() {
+  return window['go']['main']['App']['GetAnimationVersionStorageStats']();
+}
+
 export function GetGalleryPath() {
   return window['go']['main']['App']['GetGalleryPath']();
 }
@@ -98,6 +114,10 @@ export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }
 
+export function IgnoreLegacyAnimationRecovery(arg1) {
+  return window['go']['main']['App']['IgnoreLegacyAnimationRecovery'](arg1);
+}
+
 export function ImportAssets(arg1) {
   return window['go']['main']['App']['ImportAssets'](arg1);
 }
@@ -108,6 +128,10 @@ export function ImportMotionLibraryFile(arg1) {
 
 export function ImportMotionLibraryFolder(arg1) {
   return window['go']['main']['App']['ImportMotionLibraryFolder'](arg1);
+}
+
+export function ListAnimationVersions(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListAnimationVersions'](arg1, arg2, arg3);
 }
 
 export function ListAssets() {
@@ -134,6 +158,10 @@ export function ListGenerationJobs() {
   return window['go']['main']['App']['ListGenerationJobs']();
 }
 
+export function ListLegacyAnimationRecovery(arg1) {
+  return window['go']['main']['App']['ListLegacyAnimationRecovery'](arg1);
+}
+
 export function ListMotionLibrary() {
   return window['go']['main']['App']['ListMotionLibrary']();
 }
@@ -144,6 +172,10 @@ export function ListPendingGenerations() {
 
 export function ListPresets() {
   return window['go']['main']['App']['ListPresets']();
+}
+
+export function LoadAnimationVersionResource(arg1, arg2) {
+  return window['go']['main']['App']['LoadAnimationVersionResource'](arg1, arg2);
 }
 
 export function LoadImageFull(arg1) {
@@ -178,12 +210,20 @@ export function PickImage() {
   return window['go']['main']['App']['PickImage']();
 }
 
+export function PurgeAnimationVersion(arg1) {
+  return window['go']['main']['App']['PurgeAnimationVersion'](arg1);
+}
+
 export function RefreshGenerationCapabilities() {
   return window['go']['main']['App']['RefreshGenerationCapabilities']();
 }
 
 export function ReprocessVideoState(arg1) {
   return window['go']['main']['App']['ReprocessVideoState'](arg1);
+}
+
+export function RestoreAnimationVersion(arg1) {
+  return window['go']['main']['App']['RestoreAnimationVersion'](arg1);
 }
 
 export function RetryGenerationJob(arg1) {
@@ -200,6 +240,14 @@ export function RewriteRiskyPrompt(arg1) {
 
 export function SaveAnimationPipeline(arg1) {
   return window['go']['main']['App']['SaveAnimationPipeline'](arg1);
+}
+
+export function SaveAnimationVersionWarningGB(arg1) {
+  return window['go']['main']['App']['SaveAnimationVersionWarningGB'](arg1);
+}
+
+export function SaveBackgroundRemovalMode(arg1) {
+  return window['go']['main']['App']['SaveBackgroundRemovalMode'](arg1);
 }
 
 export function SaveCharacterLibraryItem(arg1) {
@@ -246,6 +294,10 @@ export function SendAssetToModule(arg1) {
   return window['go']['main']['App']['SendAssetToModule'](arg1);
 }
 
+export function SetCurrentAnimationVersion(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetCurrentAnimationVersion'](arg1, arg2, arg3);
+}
+
 export function SetImageProvider(arg1) {
   return window['go']['main']['App']['SetImageProvider'](arg1);
 }
@@ -264,4 +316,12 @@ export function SetVideoProvider(arg1) {
 
 export function SetVisionProvider(arg1) {
   return window['go']['main']['App']['SetVisionProvider'](arg1);
+}
+
+export function SoftDeleteAnimationVersion(arg1) {
+  return window['go']['main']['App']['SoftDeleteAnimationVersion'](arg1);
+}
+
+export function UpdateAnimationVersionComposition(arg1, arg2) {
+  return window['go']['main']['App']['UpdateAnimationVersionComposition'](arg1, arg2);
 }

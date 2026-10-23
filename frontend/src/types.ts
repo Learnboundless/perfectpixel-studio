@@ -166,6 +166,7 @@ export type VideoShadowMode = "avoid" | "allow_contact";
 export type FrameSamplerMode = "candidate_pool" | "uniform";
 export type AlignmentMode = "preserve_source_canvas" | "game_anchor_normalize";
 export type FrameFitMode = "contain" | "auto_expand" | "crop";
+export type BackgroundRemovalMode = "inherit" | "chroma" | "neural" | "hybrid";
 
 export interface GenerationReference {
   kind: string;
@@ -211,6 +212,11 @@ export interface GenerationTrace {
   videoMediaSlots?: GenerationMediaSlotTrace[];
   frameSamplerMode?: FrameSamplerMode | string;
   alignmentMode?: AlignmentMode | string;
+  backgroundRemovalMode?: BackgroundRemovalMode | string;
+  backgroundRemovalModel?: string;
+  backgroundRemovalSha256?: string;
+  backgroundRemovalMs?: number;
+  backgroundRemovalFallback?: string;
   prompt?: string;
   calledAi: boolean;
   parameters?: Record<string, string>;
@@ -330,6 +336,30 @@ export interface StateDef {
   facing?: string; // 8방향 키 (south 등, 미지정 시 방향 지시 없음)
   dirBase?: string; // 8방향 세트의 베이스 상태명 (세트 소속일 때만)
   mirrorOf?: string; // 미러링 소스 방향 키 (west→east 등, AI 생성 안 함)
+  currentVersionId?: string;
+  currentVersionNumber?: number;
+  versionCount?: number;
+  backgroundRemovalMode?: BackgroundRemovalMode;
+}
+
+export interface AnimationVersionSummary {
+  id: string;
+  characterId: string;
+  stateId: string;
+  stateName: string;
+  versionNumber: number;
+  status: string;
+  source: string;
+  parentVersionId?: string;
+  frameCount: number;
+  overallScore?: number;
+  backgroundRemovalMode?: string;
+  thumbnail?: string;
+  createdAt: string;
+  deletedAt?: string;
+  sizeBytes: number;
+  partialRecovery?: boolean;
+  current: boolean;
 }
 
 // 백엔드 sprite.DirectionInfo와 동일 구조 (ListDirections 응답)
